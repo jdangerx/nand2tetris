@@ -17,4 +17,29 @@ CHIP PC {
 
     PARTS:
     // Put your code here:
+    // zx nx zy ny  f no
+    //  1  0  0  0  0  0     0  reset
+    //  1  1  0  0  0  0     y  load
+    //  0  1  1  1  1  1     x+1  inc
+    //  0  0  1  1  0  0     x  nothing
+
+    //  zx == (reset||load) && (!inc)
+    //  nx == (load||inc) && (!reset)
+    //  zy == !(reset||load)
+    //  ny == !(reset||load)
+    //  f == !(reset||load) && inc
+    //  no = !(reset||load) && inc
+
+    Not(in=reset, out=notR);
+    Not(in=inc, out=notI);
+    Or(a=load, b=inc, out=orLI);
+    Or(a=reset, b=load, out=orRL);
+    Not(in=orRL, out=norRL);
+
+    Or(a=reset, b=load, out=zx);
+    And(a=orLI, b=notR, out=nx);
+    Mux(a=norRL, b=norRL, sel=false, out=zy, out=ny);
+    And(a=norRL, b=inc, out=f, out=no);
+    ALU(x=registerContents, y=in, zx=zx, nx=nx, zy=zy, ny=ny, f=f, no=no, out=newState);
+    Register(in=newState, load=true, out=registerContents, out=out);
 }
