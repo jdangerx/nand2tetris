@@ -27,5 +27,12 @@ CHIP Memory {
     OUT out[16];
 
     PARTS:
-    // Put your code here:
+
+    DMux(in=load, sel=address[14], a=ram, b=screen);
+    RAM16K(in=in, load=ram, address=address[0..13], out=outRam);
+    Screen(in=in, load=screen, address=address[0..12], out=outScreen);
+    Keyboard(out=outKbd);
+    Mux4Way16(a=outRam, b=outRam, c=outScreen, d=outKbd, sel=address[13..14], out=out);
+    // if sel is 00, we are looking at first 8k of ram
+    // and if sel is 01 ([10] since little-endian) we are loooking at second 8k
 }

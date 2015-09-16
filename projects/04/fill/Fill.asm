@@ -25,9 +25,10 @@ M=0 // set color to 0000 0000 0000 0000
 0;JMP // color the screen
 
 (FILL)
+@21845
+D=A
 @R3
-M=0 // set color to 1111 1111 1111 1111
-M=!M
+M=D // set color to 0101 0101 0101 0101
 @COLOR
 0;JMP // color the screen
 
@@ -61,8 +62,8 @@ D;JEQ  // done with this row! go to next one!
 @R3
 D=M // D = *R3 = color of fill
 @R0  // A = R0 (memory address of pixels we want to poke)
-A=M
-M=D // toggle fill.
+A=M  // A = *A
+M=D  // *A (which is **R0) = D toggle fill.
 @R0
 M=M+1 // advance screen pointer
 @R2

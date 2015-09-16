@@ -39,5 +39,92 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-    // Put your code here:
+    // instruction[0..2] are jump bits:
+    // instruction[0] = j3 = JGT
+    // instruction[1] = j2 = JEQ
+    // instruction[2] = j1 = JLT
+    // instruction[3..5] are dest bits:
+    // instruction[5] = d3 = A
+    // instruction[4] = d2 = D
+    // instruction[3] = d1 = M
+    // instruction[6..11] are control bits:
+    // instruction[6] = c6 = no
+    // instruction[7] = c5 = f
+    // instruction[8] = c4 = ny
+    // instruction[9] = c3 = zy
+    // instruction[10] = c2 = nx
+    // instruction[11] = c1 = zx
+    // instruction[12] is the selector for Mux(a, m)
+    // instruction[15] is the control bit for a/c
+
+    // writeM
+    // instruction[3] = d1 = M
+    And(a=instruction[3], b=instruction[15], out=writeM);
+
+    // Mux that decides what to put in A
+    Not(in=instruction[15], out=addrIns);
+    // instruction[5] = d3 = A
+    // instruction[15] is the control bit for a/c
+    Or(a=addrIns, b=instruction[5], out=aLoad);
+    // depending on type of instruction, send in the instruction or the ALU out
+    Mux16(a=instruction, b=aluOut, sel=instruction[15], out=aIn);
+
+    // Mux that decides to feed A or M into ALU
+    // instruction[12] is the selector for Mux(a, m)
+    Mux16(a=aOut, b=inM, sel=instruction[12], out=amOut);
+
+    // ALU
+    // instruction[6] = c6 = no
+    // instruction[7] = c5 = f
+    // instruction[8] = c4 = ny
+    // instruction[9] = c3 = zy
+    // instruction[10] = c2 = nx
+    // instruction[11] = c1 = zx
+    ALU(
+        x=dOut,
+        y=amOut,
+        zx=instruction[11],
+        nx=instruction[10],
+        zy=instruction[9],
+        ny=instruction[8],
+        f=instruction[7],
+        no=instruction[6],
+        out=outM,
+        out=aluOut,
+        out[0..7]=outLo,
+        out[8..15]=outHi,
+        out[15]=ng
+    );
+
+    // stupid no-ZR output???
+    Or8Way(in=outLo, out=outLoNotZero);
+    Or8Way(in[0..7]=outHi, out=outHiNotZero);
+    Or(a=outLoNotZero, b=outHiNotZero, out=outNotZero);
+    Not(in=outNotZero, out=zr);
+
+    // Jump logic
+    // instruction[0] = j3 = JGT
+    // instruction[1] = j2 = JEQ
+    // instruction[2] = j1 = JLT
+
+    Or(a=zr, b=ng, out=isNonPositive);
+    Not(in=isNonPositive, out=isPos);
+    And(a=instruction[0], b=isPos, out=jgtAndIsPos);
+    And(a=instruction[1], b=zr, out=jeqAndIsZero);
+    And(a=instruction[2], b=ng, out=jltAndIsNeg);
+    Or(a=jgtAndIsPos, b=jeqAndIsZero, out=jgtOrJeq);
+    Or(a=jgtOrJeq, b=jltAndIsNeg, out=jumpIfCompute);
+    And(a=instruction[15], b=jumpIfCompute, out=jump);
+
+    // Register A
+    ARegister(in=aIn, load=aLoad, out=aOut, out[0..14]=addressM);
+
+    // Register D
+    And(a=instruction[4], b=instruction[15], out=dLoad);
+    DRegister(in=aluOut, load=dLoad, out=dOut);
+
+    // Program Counter
+    PC(in=aOut, load=jump, inc=true, reset=reset, out[0..14]=pc);
+
+
 }
