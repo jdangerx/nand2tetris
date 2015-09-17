@@ -15,7 +15,7 @@ class Hackable a where
 
 data Command = Addr (Either String Int)
              | Comp Mnem (Maybe Dest) (Maybe Jump)
-             | Label String Int
+             | Label {name :: String, labelAddr :: Int}
              deriving Show
 
 isLabel :: Command -> Bool
@@ -92,7 +92,7 @@ instance Hackable Jump where
 jumpFromString :: String -> Jump
 jumpFromString "JGT" = Jump False False True
 jumpFromString "JEQ" = Jump False True False
-jumpFromString "JGE" = Jump True False True
+jumpFromString "JGE" = Jump False True True
 jumpFromString "JLT" = Jump True False False
 jumpFromString "JNE" = Jump True False True
 jumpFromString "JLE" = Jump True True False
@@ -115,7 +115,7 @@ addr =
         [] -> (\m -> case m of
                     Just a -> Right a
                     Nothing -> Left rawVal) . M.lookup rawVal $ st
-    modifyState ((+ 1) <$> )
+    modifyState ((+ 1) <$>)
     return $ Addr val
 
 getOrCreateVariable :: String -> M.Map String Int -> (M.Map String Int, Int)
@@ -138,7 +138,7 @@ asmLabel =
 comp :: Parsec String (M.Map String Int, Int) Command
 comp = do
   dest <- optionMaybe (try (many (oneOf "ADM") <* char '='))
-  mnem <- many1 (oneOf "+-&|01ADM") <?> "mnemonic"
+  mnem <- many1 (oneOf "+-&|!01ADM") <?> "mnemonic"
   jump <- optionMaybe (char ';' *>
                       (try (string "JGT")
                        <|> try (string "JEQ")
@@ -172,6 +172,9 @@ getCmds = do
   (st, _) <- getState
   let cmds = resolveVariables (catMaybes maybeCmds) st
   return cmds
+
+getMCmds :: Parsec String (M.Map String Int, Int) [Maybe Command]
+getMCmds = command `sepBy` char '\n' <* spaces <* eof
 
 resolveVariables :: [Command] -> M.Map String Int -> [Command]
 resolveVariables cmds symbolTable =
@@ -238,7 +241,7 @@ main = do
   [infile, outfile] <- getArgs
   input <- readFile infile
   let cmds = runParser getCmds (initialST, 0) infile input
-  print cmds
+  print $ filter (\l -> name l == "ponggame.0") . filter isLabel <$> cmds
   case unlines . map toHack . filter (not . isLabel) <$> cmds of
    Left err -> print err
    Right c -> writeFile outfile c
