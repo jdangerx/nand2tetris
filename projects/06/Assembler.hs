@@ -18,11 +18,40 @@ data Command = Addr Int
 
 instance Hackable Command where
   toHack (Addr n) = "0" ++ lpad 15 (showIntAtBase 2 intToDigit n "")
-  toHack (Comp m d j) = "111" ++ "1" ++ "101010"
+  toHack (Comp m d j) = "111" ++ toHack m
                         ++ fromMaybe "000" (toHack <$> d)
                         ++ fromMaybe "000" (toHack <$> j)
 
-type Mnem = String
+data Mnem = Mnem String
+          deriving Show
+
+instance Hackable Mnem where
+  toHack (Mnem s) =
+    let
+      repl 'M' = 'O'
+      repl 'A' = 'O'
+      repl c = c
+      mFlag = if 'M' `elem` s then '1' else '0'
+    in
+     case map repl s of
+      "0" -> mFlag : "101010"
+      "1" -> mFlag : "111111"
+      "-1" -> mFlag : "111010"
+      "D" -> mFlag : "001100"
+      "O" -> mFlag : "110000"
+      "!D" -> mFlag : "001101"
+      "!O" -> mFlag : "110001"
+      "-D" -> mFlag : "001111"
+      "-O" -> mFlag : "110011"
+      "D+1" -> mFlag : "011111"
+      "O+1" -> mFlag : "110111"
+      "D-1" -> mFlag : "001110"
+      "O-1" -> mFlag : "110010"
+      "D+O" -> mFlag : "000010"
+      "D-O" -> mFlag : "010011"
+      "O-D" -> mFlag : "000111"
+      "D&O" -> mFlag : "000000"
+      "D|O" -> mFlag : "010101"
 
 data Dest = Dest {
   destA :: Bool,
@@ -70,7 +99,7 @@ addr = char '@'
 
 comp :: Parser Command
 comp = do
-  dest <- optionMaybe (many (oneOf "ADM") <* char '=')
+  dest <- optionMaybe (try (many (oneOf "ADM") <* char '='))
   mnem <- many1 (oneOf "+-&|01ADM") <?> "mnemonic"
   jump <- optionMaybe (char ';' *>
                       (try (string "JGT")
@@ -82,13 +111,24 @@ comp = do
                        <|> try (string "JMP")
                       )
                      )
-  return $ Comp mnem (destFromString <$> dest) (jumpFromString <$> jump)
+  return $ Comp (Mnem mnem) (destFromString <$> dest) (jumpFromString <$> jump)
 
 command :: Parser Command
 command = do
   spaces
-  try addr <|> try comp
+  com <- try addr <|> try comp
+  comment
+  return com
 
+comment :: Parser ()
+comment = do
+  many (oneOf " \t")
+  optional (string "//")
+  many (noneOf "\n")
+  return ()
+
+getCmds :: Parser [Command]
+getCmds = command `sepBy` char '\n' <* eof
 
 -- command :: Parser String
 -- command = spaces >>
