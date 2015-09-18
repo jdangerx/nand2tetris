@@ -2,6 +2,8 @@ module Main where
 
 import Numeric (showIntAtBase)
 import Data.Char (intToDigit)
+import Data.Function (on)
+import qualified Data.List as L
 import Data.Maybe (catMaybes, fromMaybe)
 import System.Environment (getArgs)
 import Text.Parsec
@@ -166,32 +168,28 @@ comment = do
   many (noneOf "\n")
   return ()
 
-getCmds :: Parsec String (M.Map String Int, Int) [Command]
+getCmds :: Parsec String (M.Map String Int, Int) ([Command], M.Map String Int)
 getCmds = do
   maybeCmds <- command `sepBy` char '\n' <* spaces <* eof
   (st, _) <- getState
   let cmds = resolveVariables (catMaybes maybeCmds) st
   return cmds
 
-getMCmds :: Parsec String (M.Map String Int, Int) [Maybe Command]
-getMCmds = command `sepBy` char '\n' <* spaces <* eof
-
-resolveVariables :: [Command] -> M.Map String Int -> [Command]
+resolveVariables :: [Command] -> M.Map String Int -> ([Command], M.Map String Int)
 resolveVariables cmds symbolTable =
-  fst $ foldr (\cmd (ls, st) ->
-              case cmd of
-               Addr (Left _) -> resolveVar cmd ls st
-               _ -> (cmd:ls, st)
-            ) ([], symbolTable) cmds
+  -- foldl to go through from the left hah.
+  (\(a, b, _) -> (reverse a, b)) $ foldl (\(ls, st, mem) cmd -> 
+          case cmd of
+           Addr (Left _) -> resolveVar cmd ls st mem
+           _ -> (cmd:ls, st, mem)
+        ) ([], symbolTable, 16) cmds
 
 resolveVar ::
-  Command -> [Command] -> M.Map String Int -> ([Command], M.Map String Int)
-resolveVar (Addr (Left varName)) ls st =
+  Command -> [Command] -> M.Map String Int -> Int -> ([Command], M.Map String Int, Int)
+resolveVar (Addr (Left varName)) ls st mem =
   case M.lookup varName st of
-   Just address -> (Addr (Right address):ls, st)
-   Nothing -> let address = getSmallestVarAddr st 16
-             in
-              (Addr (Right address):ls, M.insert varName address st)
+   Just address -> (Addr (Right address):ls, st, mem)
+   Nothing -> (Addr (Right mem):ls, M.insert varName mem st, mem+1)
 
 getSmallestVarAddr :: M.Map String Int -> Int -> Int
 getSmallestVarAddr st n = if n `elem` (map snd . M.toList $ st)
@@ -204,7 +202,7 @@ testParse =
      input <- readFile "test.asm"
      let cmds = runParser getCmds (M.empty, 0) "test.asm" input
      print cmds
-     case unlines . map toHack . filter (not . isLabel) <$> cmds of
+     case unlines . map toHack . filter (not . isLabel) . fst <$> cmds of
       Left err -> print err
       Right c -> writeFile "testHaskell.hack" c
 
@@ -241,8 +239,9 @@ main = do
   [infile, outfile] <- getArgs
   input <- readFile infile
   let cmds = runParser getCmds (initialST, 0) infile input
-  print $ filter (\l -> name l == "ponggame.0") . filter isLabel <$> cmds
-  case unlines . map toHack . filter (not . isLabel) <$> cmds of
+  let symbolTable = snd <$> cmds
+  print $ L.sortBy (compare `on` snd) . M.toList . M.filter (\x -> x < 50 && x >= 16) <$> symbolTable
+  case unlines . map toHack . filter (not . isLabel) . fst <$> cmds of
    Left err -> print err
    Right c -> writeFile outfile c
   return ()
