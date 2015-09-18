@@ -2,12 +2,54 @@ module Main where
 
 import Numeric (showIntAtBase)
 import Data.Char (intToDigit)
-import Data.Function (on)
-import qualified Data.List as L
 import Data.Maybe (catMaybes, fromMaybe)
 import System.Environment (getArgs)
-import Text.Parsec
+import Text.Parsec hiding (label)
 import qualified Data.Map as M
+
+data Command = Addr (Either String Int)
+             | Comp Mnem (Maybe Dest) (Maybe Jump)
+             | Label {name :: String, labelAddr :: Int}
+             deriving Show
+
+data Mnem = Mnem String
+          deriving Show
+
+data Dest = Dest {
+  destA :: Bool,
+  destD :: Bool,
+  destM :: Bool
+  }
+            deriving Show
+
+data Jump = Jump {
+  jlt :: Bool,
+  jeq :: Bool,
+  jgt :: Bool
+  }
+            deriving Show
+
+destFromString :: String -> Dest
+destFromString s =
+  Dest {
+    destA = 'A' `elem` s,
+    destD = 'D' `elem` s,
+    destM = 'M' `elem` s
+  }
+
+jumpFromString :: String -> Jump
+jumpFromString "JGT" = Jump False False True
+jumpFromString "JEQ" = Jump False True False
+jumpFromString "JGE" = Jump False True True
+jumpFromString "JLT" = Jump True False False
+jumpFromString "JNE" = Jump True False True
+jumpFromString "JLE" = Jump True True False
+jumpFromString "JMP" = Jump True True True
+jumpFromString _ = Jump False False False
+
+isLabel :: Command -> Bool
+isLabel (Label _ _) = True
+isLabel _ = False
 
 lpad :: Int -> String -> String
 lpad n s = reverse $ take n $ reverse s ++ repeat '0'
@@ -15,25 +57,12 @@ lpad n s = reverse $ take n $ reverse s ++ repeat '0'
 class Hackable a where
   toHack :: Hackable a => a -> String
 
-data Command = Addr (Either String Int)
-             | Comp Mnem (Maybe Dest) (Maybe Jump)
-             | Label {name :: String, labelAddr :: Int}
-             deriving Show
-
-isLabel :: Command -> Bool
-isLabel (Label _ _) = True
-isLabel _ = False
-
 instance Hackable Command where
   toHack (Addr (Right n)) = "0" ++ lpad 15 (showIntAtBase 2 intToDigit n "")
   toHack (Comp m d j) = "111" ++ toHack m
                         ++ fromMaybe "000" (toHack <$> d)
                         ++ fromMaybe "000" (toHack <$> j)
-  toHack (Addr (Left s)) = ""
-  toHack (Label _ _) = ""
-
-data Mnem = Mnem String
-          deriving Show
+  toHack _ = ""
 
 instance Hackable Mnem where
   toHack (Mnem s) =
@@ -63,44 +92,11 @@ instance Hackable Mnem where
       "D&O" -> mFlag : "000000"
       "D|O" -> mFlag : "010101"
 
-data Dest = Dest {
-  destA :: Bool,
-  destD :: Bool,
-  destM :: Bool
-  }
-            deriving Show
-
 instance Hackable Dest where
   toHack (Dest a d m) = map (\b -> if b then '1' else '0') [a, d, m]
 
-destFromString :: String -> Dest
-destFromString s =
-  Dest {
-    destA = 'A' `elem` s,
-    destD = 'D' `elem` s,
-    destM = 'M' `elem` s
-  }
-
-data Jump = Jump {
-  jlt :: Bool,
-  jeq :: Bool,
-  jgt :: Bool
-  }
-            deriving Show
-
 instance Hackable Jump where
   toHack (Jump lt eq gt) = map (\b -> if b then '1' else '0') [lt, eq, gt]
-
-jumpFromString :: String -> Jump
-jumpFromString "JGT" = Jump False False True
-jumpFromString "JEQ" = Jump False True False
-jumpFromString "JGE" = Jump False True True
-jumpFromString "JLT" = Jump True False False
-jumpFromString "JNE" = Jump True False True
-jumpFromString "JLE" = Jump True True False
-jumpFromString "JMP" = Jump True True True
-jumpFromString _ = Jump False False False
-
 
 addr :: Parsec String (M.Map String Int, Int) Command
 addr =
@@ -120,17 +116,8 @@ addr =
     modifyState ((+ 1) <$>)
     return $ Addr val
 
-getOrCreateVariable :: String -> M.Map String Int -> (M.Map String Int, Int)
-getOrCreateVariable v st =
-  let newAddr = max 16 ((+ 1) . maximum . (0:) . map snd . M.toList $ st)
-  in
-   case M.lookup v st of
-    Nothing -> (M.insertWith (\_ old -> old) v newAddr st, newAddr)
-    Just address -> (st, address)
-
-
-asmLabel :: Parsec String (M.Map String Int, Int) Command
-asmLabel =
+label :: Parsec String (M.Map String Int, Int) Command
+label =
   do
     name <- between (char '(') (char ')') (many (alphaNum <|> oneOf "_.$:"))
     (_, cmdsSeen) <- getState
@@ -154,19 +141,19 @@ comp = do
   modifyState ((+ 1) <$>)
   return $ Comp (Mnem mnem) (destFromString <$> dest) (jumpFromString <$> jump)
 
-command :: Parsec String (M.Map String Int, Int) (Maybe Command)
-command = do
-  spaces
-  com <- optionMaybe (try addr <|> try comp <|> try asmLabel)
-  comment
-  return com
-
 comment :: Parsec String a ()
 comment = do
   many (oneOf " \t")
   optional (string "//")
   many (noneOf "\n")
   return ()
+
+command :: Parsec String (M.Map String Int, Int) (Maybe Command)
+command = do
+  spaces
+  com <- optionMaybe (try addr <|> try comp <|> try label)
+  comment
+  return com
 
 getCmds :: Parsec String (M.Map String Int, Int) ([Command], M.Map String Int)
 getCmds = do
@@ -177,8 +164,8 @@ getCmds = do
 
 resolveVariables :: [Command] -> M.Map String Int -> ([Command], M.Map String Int)
 resolveVariables cmds symbolTable =
-  -- foldl to go through from the left hah.
-  (\(a, b, _) -> (reverse a, b)) $ foldl (\(ls, st, mem) cmd -> 
+  -- foldl to go through from the left
+  (\(a, b, _) -> (reverse a, b)) $ foldl (\(ls, st, mem) cmd ->
           case cmd of
            Addr (Left _) -> resolveVar cmd ls st mem
            _ -> (cmd:ls, st, mem)
@@ -190,21 +177,6 @@ resolveVar (Addr (Left varName)) ls st mem =
   case M.lookup varName st of
    Just address -> (Addr (Right address):ls, st, mem)
    Nothing -> (Addr (Right mem):ls, M.insert varName mem st, mem+1)
-
-getSmallestVarAddr :: M.Map String Int -> Int -> Int
-getSmallestVarAddr st n = if n `elem` (map snd . M.toList $ st)
-                          then getSmallestVarAddr st (n + 1)
-                          else n
-
-testParse :: IO ()
-testParse =
-   do
-     input <- readFile "test.asm"
-     let cmds = runParser getCmds (M.empty, 0) "test.asm" input
-     print cmds
-     case unlines . map toHack . filter (not . isLabel) . fst <$> cmds of
-      Left err -> print err
-      Right c -> writeFile "testHaskell.hack" c
 
 initialST :: M.Map String Int
 initialST = M.fromList
@@ -239,13 +211,7 @@ main = do
   [infile, outfile] <- getArgs
   input <- readFile infile
   let cmds = runParser getCmds (initialST, 0) infile input
-  let symbolTable = snd <$> cmds
-  print $ L.sortBy (compare `on` snd) . M.toList . M.filter (\x -> x < 50 && x >= 16) <$> symbolTable
   case unlines . map toHack . filter (not . isLabel) . fst <$> cmds of
    Left err -> print err
    Right c -> writeFile outfile c
   return ()
-
--- need to make the symbol table in two passes:
--- build up labels when parsing
--- then go through all addr's and try to resolve them.
