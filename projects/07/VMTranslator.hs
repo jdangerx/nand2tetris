@@ -1,83 +1,95 @@
 module Main where
 
-import Data.Char (isSpace)
+import VMParse
 import Text.Parsec
-import Text.Parsec.Char
-import Text.Parsec.String
+import System.Environment
 
-data Command = Push Segment Index
-             | Pop Segment Index
-             | Add
-             | Sub
-             | Neg
-             | Eq
-             | Gt
-             | Lt
-             | And
-             | Or
-             | Not
+class Assemblable a where
+  toAsm :: a -> String
 
-data Segment = Argument
-             | Local
-             | Static
-             | Constant
-             | This
-             | That
-             | Pointer
-             | Temp
-
-type Index = Maybe Int
-
-
-class Hackable a where
-  toHack :: a -> String
-
-comment :: Parser String
-comment = do
-  string "//"
-  many $ noneOf "\n"
-
-spaces1 :: Parser ()
-spaces1 = do
-  satisfy isSpace
-  spaces
-
-segment :: Parser Segment
-segment =
-  (try (string "argument") >> return Argument)
-  <|> (try (string "local") >> return Local)
-  <|> (try (string "Static") >> return Static)
-  <|> (try (string "Constant") >> return Constant)
-  <|> (try (string "This") >> return This)
-  <|> (try (string "That") >> return That)
-  <|> (try (string "Pointer") >> return Pointer)
-  <|> (try (string "Temp") >> return Temp)
-
-index :: Parser Index
-index = do
-  num <- optionMaybe (many digit)
-  return $ read <$> num
-
-pushPop :: Parser Command
-pushPop = do
-  cmd <- (string "push" >> return Push) <|> (string "pop" >> return Pop)
-  spaces1
-  seg <- segment
-  spaces1
-  ind <- index
-  return $ cmd seg ind
-
-arithmetic :: Parser Command
-arithmetic =
-  try (string "add" >> return Add)
-  <|> try (string "sub" >> return Sub)
-  <|> try (string "neg" >> return Neg)
-  <|> try (string "eq" >> return Eq)
-  <|> try (string "gt" >> return Gt)
-  <|> try (string "lt" >> return Lt)
-  <|> try (string "and" >> return And)
-  <|> try (string "or" >> return Or)
-  <|> try (string "not" >> return Not)
+instance Assemblable Command where
+  toAsm (Push Constant (Just n)) = unlines
+                                   [
+                                     "@" ++ show n, -- A = n
+                                     "D=A",  -- D = n
+                                     "@SP",
+                                     "A=M",
+                                     "M=D",
+                                     "@SP",
+                                     "M=M+1"
+                                   ]
+  toAsm Add = unlines
+              [
+                "@SP", -- M = &y+1
+                "M=M-1", -- M = &y 
+                "A=M", -- A = &y
+                "D=M", -- D = M = y
+                "@SP",
+                "M=M-1", -- M = *x
+                "A=M", -- A = *x
+                "M=D+M" -- x = y + x
+              ]
+  toAsm Sub = unlines
+              [
+                "@SP",
+                "A=M",
+                "D=M", -- D = M = y
+                "@SP",
+                "M=M-1",
+                "A=M", -- M = x
+                "M=M-D" -- x = x - y
+              ]
+  toAsm Neg = unlines
+              [
+                "@SP", -- A = &(&y)
+                "A=M", -- A = &y
+                "M=-M" -- y = -y
+              ]
+  toAsm Eq = unlines
+             [
+               "@SP", -- A = &(&y)
+               "A=M", -- A = &y
+               "D=M", -- D = M = y
+               "@THIS", -- THIS = &y
+               "M=D",
+               "@SP",  -- A = &(&y)
+               "M=M-1", -- A = &(&y-1) = &(&x)
+               "A=M", -- A = &x
+               "D=M", -- D = x
+               "@THIS", -- A = &y
+               "D=D|M", -- D = x|y
+               "@THAT",
+               "M=!D", -- THAT = &(!(x|y))
+               "@SP", -- A = &&x
+               "A=M", -- A= &x
+               "D=M", -- D=x
+               "@THIS",
+               "D=D&M", -- THIS = &(x&y)
+               "@THAT", -- A = &(!(x|y))
+               "D=D|M", -- D=(!(x|y) | (x&y)) = x == y
+               "@SP", -- A = &&x
+               "A=M", -- A = &x
+               "M=D" -- x = (x == y)
+             ]
+  toAsm Gt = unlines
+             [
+               "@SP",
+               "A=M",
+               "D=M", -- D = M = y
+               "@SP",
+               "M=M-1",
+               "A=M", -- now M = x
+               "M=D&M", -- x = x&y
+               "D=1",
+               "M=D&M"
+             ]
 
 main :: IO ()
-main = return ()
+main = do
+  [infile, outfile] <- getArgs
+  input <- readFile infile
+  let vmCmds = runParser parseVM () infile input
+  case vmCmds of
+   Left err -> print err
+   Right c -> writeFile outfile (unlines . map toAsm $ c)
+  return ()
