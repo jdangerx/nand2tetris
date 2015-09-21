@@ -4,118 +4,130 @@ import VMParse
 import Text.Parsec
 import System.Environment
 
+decSP :: [String]
+decSP = ["@SP", "M=M-1", "A=M"]
+
+incSP :: [String]
+incSP = ["@SP", "M=M+1"]
+
+pushDSP :: [String]
+pushDSP = ["@SP", "A=M", "M=D"] ++ incSP
+
+pushSeg :: Segment -> String
+pushSeg (Constant (Just n)) =
+  unlines ["@" ++ show n, "D=A"]
+pushSeg (Local (Just n)) =
+  unlines ["@LCL", "D=M", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (Argument (Just n)) =
+  unlines ["@ARG", "D=M", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (This (Just n)) =
+  unlines ["@THIS", "D=M", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (That (Just n)) =
+  unlines ["@THAT", "D=M", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (Temp (Just n)) =
+  unlines ["@5", "D=A", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg _ = ""
+
+popToR13 :: [String]
+popToR13 = ["@SP", "M=M-1", "A=M", "D=M", "@R13", "M=D"] -- R13 = **SP
+
+putR13IntoR14 :: [String]
+putR13IntoR14 = ["@R13", "D=M", "@R14", "A=M", "M=D"]
+
+popSeg :: Segment -> String
+popSeg (Local (Just n)) =
+  unlines ["@LCL", "D=M", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (Argument (Just n)) =
+  unlines ["@ARG", "D=M", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (This (Just n)) =
+  unlines ["@THIS", "D=M", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (That (Just n)) =
+  unlines ["@THAT", "D=M", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (Temp (Just n)) =
+  unlines ["@5", "D=A", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg _ = ""
+
 class Assemblable a where
   toAsm :: a -> String
 
-popSP :: [String]
-popSP = ["@SP", "M=M-1", "A=M"]
- 
-pushSP :: [String]
-pushSP = ["@SP", "M=M+1"]
-
 instance Assemblable Command where
-  toAsm (Push Constant (Just n)) =
-    unlines $
-    [
-      "@" ++ show n, -- A = n
-      "D=A",  -- D = n
-      "@SP",
-      "A=M",
-      "M=D"
-    ] ++ pushSP
+  toAsm (Push seg) =
+    pushSeg seg ++ unlines pushDSP
+  toAsm (Pop seg) =
+    unlines popToR13 ++ popSeg seg ++ unlines putR13IntoR14
   toAsm Add =
-    unlines $
-    popSP ++
-    "D=M" :
-    popSP ++
-    "M=D+M" : -- x = y + x
-    pushSP
+    unlines $ decSP ++ "D=M" : decSP ++ "M=D+M" : incSP
   toAsm Sub =
-    unlines $
-    popSP ++
-    "D=M" : -- D = M = y
-    popSP ++
-    "M=M-D" :
-    pushSP -- x = x - y
-  toAsm Neg = unlines $ popSP ++ "M=-M" : pushSP
+    unlines $ decSP ++ "D=M" : decSP ++ "M=M-D" : incSP
+  toAsm Neg = unlines $ decSP ++ "M=-M" : incSP
   toAsm (Eq jId) =
     unlines $
-    popSP ++
+    decSP ++
     "D=M" : -- D = M = y
-    popSP ++
+    decSP ++
     [
       "D=M-D", -- D = x - y
-      "@eqJmp"++show jId,
+      "@_eqJmp"++show jId,
       "D;JEQ", -- x = x - y
       "@SP",
       "A=M",
       "M=0",
-      "@endEqJmp"++show jId,
+      "@_endEqJmp"++show jId,
       "0;JMP",
-      "(eqJmp"++show jId++")",
+      "(_eqJmp"++show jId++")",
       "@SP",
       "A=M",
       "M=-1",
-      "(endEqJmp"++show jId++")"
+      "(_endEqJmp"++show jId++")"
     ] ++
-    pushSP
-  toAsm (Gt jId) = 
+    incSP
+  toAsm (Gt jId) =
     unlines $
-    popSP ++
+    decSP ++
     "D=M" : -- D = M = y
-    popSP ++
+    decSP ++
     [
       "D=M-D", -- D = x - y
-      "@gtJmp"++show jId,
+      "@_gtJmp"++show jId,
       "D;JGT", -- x = x - y
       "@SP",
       "A=M",
       "M=0",
-      "@endGtJmp"++show jId,
+      "@_endGtJmp"++show jId,
       "0;JMP",
-      "(gtJmp"++show jId++")",
+      "(_gtJmp"++show jId++")",
       "@SP",
       "A=M",
       "M=-1",
-      "(endGtJmp"++show jId++")"
+      "(_endGtJmp"++show jId++")"
     ] ++
-    pushSP
-  toAsm (Lt jId) = 
+    incSP
+  toAsm (Lt jId) =
     unlines $
-    popSP ++
+    decSP ++
     "D=M" : -- D = M = y
-    popSP ++
+    decSP ++
     [
       "D=M-D", -- D = x - y
-      "@ltJmp"++show jId,
+      "@_ltJmp"++show jId,
       "D;JLT", -- x = x - y
       "@SP",
       "A=M",
       "M=0",
-      "@endLtJmp"++show jId,
+      "@_endLtJmp"++show jId,
       "0;JMP",
-      "(ltJmp"++show jId++")",
+      "(_ltJmp"++show jId++")",
       "@SP",
       "A=M",
       "M=-1",
-      "(endLtJmp"++show jId++")"
+      "(_endLtJmp"++show jId++")"
     ] ++
-    pushSP
+    incSP
   toAsm And =
-    unlines $
-    popSP ++
-    "D=M" :
-    popSP ++
-    "M=D&M" :
-    pushSP
+    unlines $ decSP ++ "D=M" : decSP ++ "M=D&M" : incSP
   toAsm Or =
-    unlines $
-    popSP ++
-    "D=M" :
-    popSP ++
-    "M=D|M" :
-    pushSP
-  toAsm Not = unlines $ popSP ++ "M=!M" : pushSP
+    unlines $ decSP ++ "D=M" : decSP ++ "M=D|M" : incSP
+  toAsm Not = unlines $ decSP ++ "M=!M" : incSP
 
 main :: IO ()
 main = do

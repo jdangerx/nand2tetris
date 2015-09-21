@@ -5,8 +5,8 @@ import Data.Maybe (catMaybes)
 import Text.Parsec
 import Text.Parsec.String
 
-data Command = Push Segment Index
-             | Pop Segment Index
+data Command = Push Segment
+             | Pop Segment
              | Add
              | Sub
              | Neg
@@ -18,14 +18,14 @@ data Command = Push Segment Index
              | Not
              deriving Show
 
-data Segment = Argument
-             | Local
-             | Static
-             | Constant
-             | This
-             | That
-             | Pointer
-             | Temp
+data Segment = Argument Index
+             | Local Index
+             | Static Index
+             | Constant Index
+             | This Index
+             | That Index
+             | Pointer Index
+             | Temp Index
              deriving Show
 
 type Index = Maybe Int
@@ -42,7 +42,7 @@ spaces1 = do
   satisfy isSpace
   spaces
 
-segment :: Parsec String Int Segment
+segment :: Parsec String Int (Index -> Segment)
 segment =
   (try (string "argument") >> return Argument)
   <|> (try (string "local") >> return Local)
@@ -60,12 +60,12 @@ index = do
 
 pushPop :: Parsec String Int Command
 pushPop = do
-  cmd <- (string "push" >> return Push) <|> (string "pop" >> return Pop)
+  cmd <- (try (string "push") >> return Push) <|> (try (string "pop") >> return Pop)
   spaces1
   seg <- segment
   spaces1
   ind <- index
-  return $ cmd seg ind
+  return $ cmd . seg $ ind
 
 arithmetic :: Parsec String Int Command
 arithmetic =
