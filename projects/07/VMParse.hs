@@ -10,9 +10,9 @@ data Command = Push Segment Index
              | Add
              | Sub
              | Neg
-             | Eq
-             | Gt
-             | Lt
+             | Eq JumpId
+             | Gt JumpId
+             | Lt JumpId
              | And
              | Or
              | Not
@@ -30,17 +30,19 @@ data Segment = Argument
 
 type Index = Maybe Int
 
-comment :: Parser String
+type JumpId = Int
+
+comment :: Parsec String Int String
 comment = do
   string "//"
   many $ noneOf "\n\r"
 
-spaces1 :: Parser ()
+spaces1 :: Parsec String Int ()
 spaces1 = do
   satisfy isSpace
   spaces
 
-segment :: Parser Segment
+segment :: Parsec String Int Segment
 segment =
   (try (string "argument") >> return Argument)
   <|> (try (string "local") >> return Local)
@@ -51,12 +53,12 @@ segment =
   <|> (try (string "pointer") >> return Pointer)
   <|> (try (string "temp") >> return Temp)
 
-index :: Parser Index
+index :: Parsec String Int Index
 index = do
   num <- optionMaybe (many digit)
   return $ read <$> num
 
-pushPop :: Parser Command
+pushPop :: Parsec String Int Command
 pushPop = do
   cmd <- (string "push" >> return Push) <|> (string "pop" >> return Pop)
   spaces1
@@ -65,26 +67,26 @@ pushPop = do
   ind <- index
   return $ cmd seg ind
 
-arithmetic :: Parser Command
+arithmetic :: Parsec String Int Command
 arithmetic =
   try (string "add" >> return Add)
   <|> try (string "sub" >> return Sub)
   <|> try (string "neg" >> return Neg)
-  <|> try (string "eq" >> return Eq)
-  <|> try (string "gt" >> return Gt)
-  <|> try (string "lt" >> return Lt)
+  <|> try (pure Eq <*> (string "eq" >> modifyState (+ 1) >> getState))
+  <|> try (pure Gt <*> (string "gt" >> modifyState (+ 1) >> getState))
+  <|> try (pure Lt <*> (string "lt" >> modifyState (+ 1) >> getState))
   <|> try (string "and" >> return And)
   <|> try (string "or" >> return Or)
   <|> try (string "not" >> return Not)
 
-command :: Parser (Maybe Command)
+command :: Parsec String Int (Maybe Command)
 command =
   do
     cmd <- optionMaybe (try arithmetic <|> try pushPop)
     optional comment
     return cmd
 
-parseVM :: Parser [Command]
+parseVM :: Parsec String Int [Command]
 parseVM =
   do
     cmds <- sepBy command (oneOf "\n\r") <* eof
