@@ -3,6 +3,7 @@ module Main where
 import VMParse
 import Text.Parsec
 import System.Environment
+import System.FilePath
 
 decSP :: [String]
 decSP = ["@SP", "M=M-1", "A=M"]
@@ -26,6 +27,10 @@ pushSeg (That (Just n)) =
   unlines ["@THAT", "D=M", "@" ++ show n, "A=D+A", "D=M"]
 pushSeg (Temp (Just n)) =
   unlines ["@5", "D=A", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (Pointer (Just n)) =
+  unlines ["@THIS", "D=A", "@" ++ show n, "A=D+A", "D=M"]
+pushSeg (Static filename (Just n)) =
+  unlines ["@" ++ filename ++ "." ++ show n, "D=M"] 
 pushSeg _ = ""
 
 popToR13 :: [String]
@@ -45,6 +50,10 @@ popSeg (That (Just n)) =
   unlines ["@THAT", "D=M", "@" ++ show n, "D=D+A", "@R14", "M=D"]
 popSeg (Temp (Just n)) =
   unlines ["@5", "D=A", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (Pointer (Just n)) =
+  unlines ["@THIS", "D=A", "@" ++ show n, "D=D+A", "@R14", "M=D"]
+popSeg (Static filename (Just n)) =
+  unlines ["@" ++ filename ++ "." ++ show n, "D=A", "@R14", "M=D"]
 popSeg _ = ""
 
 class Assemblable a where
@@ -133,7 +142,7 @@ main :: IO ()
 main = do
   [infile, outfile] <- getArgs
   input <- readFile infile
-  let vmCmds = runParser parseVM 0 infile input
+  let vmCmds = runParser parseVM (takeBaseName infile, 0) infile input
   case vmCmds of
    Left err -> print err
    Right c -> writeFile outfile (unlines . map toAsm $ c)

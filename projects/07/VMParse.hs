@@ -20,7 +20,7 @@ data Command = Push Segment
 
 data Segment = Argument Index
              | Local Index
-             | Static Index
+             | Static Filename Index
              | Constant Index
              | This Index
              | That Index
@@ -30,35 +30,37 @@ data Segment = Argument Index
 
 type Index = Maybe Int
 
+type Filename = String
+
 type JumpId = Int
 
-comment :: Parsec String Int String
+comment :: Parsec String (Filename, Int) String
 comment = do
   string "//"
   many $ noneOf "\n\r"
 
-spaces1 :: Parsec String Int ()
+spaces1 :: Parsec String (Filename, Int) ()
 spaces1 = do
   satisfy isSpace
   spaces
 
-segment :: Parsec String Int (Index -> Segment)
+segment :: Parsec String (Filename, Int) (Index -> Segment)
 segment =
   (try (string "argument") >> return Argument)
   <|> (try (string "local") >> return Local)
-  <|> (try (string "static") >> return Static)
+  <|> try (pure Static <*> (string "static" >> fst <$> getState))
   <|> (try (string "constant") >> return Constant)
   <|> (try (string "this") >> return This)
   <|> (try (string "that") >> return That)
   <|> (try (string "pointer") >> return Pointer)
   <|> (try (string "temp") >> return Temp)
 
-index :: Parsec String Int Index
+index :: Parsec String (Filename, Int) Index
 index = do
   num <- optionMaybe (many digit)
   return $ read <$> num
 
-pushPop :: Parsec String Int Command
+pushPop :: Parsec String (Filename, Int) Command
 pushPop = do
   cmd <- (try (string "push") >> return Push) <|> (try (string "pop") >> return Pop)
   spaces1
@@ -67,26 +69,29 @@ pushPop = do
   ind <- index
   return $ cmd . seg $ ind
 
-arithmetic :: Parsec String Int Command
+arithmetic :: Parsec String (Filename, Int) Command
 arithmetic =
   try (string "add" >> return Add)
   <|> try (string "sub" >> return Sub)
   <|> try (string "neg" >> return Neg)
-  <|> try (pure Eq <*> (string "eq" >> modifyState (+ 1) >> getState))
-  <|> try (pure Gt <*> (string "gt" >> modifyState (+ 1) >> getState))
-  <|> try (pure Lt <*> (string "lt" >> modifyState (+ 1) >> getState))
+  <|> try (pure Eq <*>
+           (string "eq" >> modifyState ((+ 1) <$>) >> snd <$> getState))
+  <|> try (pure Gt <*>
+           (string "gt" >> modifyState ((+ 1) <$>) >> snd <$> getState))
+  <|> try (pure Lt <*>
+           (string "lt" >> modifyState ((+ 1) <$>) >> snd <$> getState))
   <|> try (string "and" >> return And)
   <|> try (string "or" >> return Or)
   <|> try (string "not" >> return Not)
 
-command :: Parsec String Int (Maybe Command)
+command :: Parsec String (Filename, Int) (Maybe Command)
 command =
   do
     cmd <- optionMaybe (try arithmetic <|> try pushPop)
     optional comment
     return cmd
 
-parseVM :: Parsec String Int [Command]
+parseVM :: Parsec String (Filename, Int) [Command]
 parseVM =
   do
     cmds <- sepBy command (oneOf "\n\r") <* eof
