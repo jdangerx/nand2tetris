@@ -63,7 +63,7 @@ class Assemblable a where
   toAsm :: a -> [String]
 
 instance Assemblable Command where
-  toAsm (Call func nargs _ jId) =
+  toAsm (Call func nargs jId) =
     let returnId = func ++"_return_" ++ show jId
     in
      [ "@" ++ returnId, "D=A" ] ++ pushDSP ++  -- push return address
@@ -85,7 +85,7 @@ instance Assemblable Command where
      , "M=D"  -- LCL = SP
      , "@"++func
      , "0;JMP"
-     , "(" ++ returnId ++ ")"]
+     , "(" ++ returnId ++ ")" ]
   toAsm Return =
     [ "@LCL" -- A = &LCL
     , "D=M"  -- D = LCL
@@ -145,7 +145,7 @@ instance Assemblable Command where
     , "@R14" -- A = RET
     , "A=M"
     , "0;JMP"]
-  toAsm (Function func nargs _) =
+  toAsm (Function func nargs) =
     ["(" ++ func ++ ")"] ++
     concat (replicate nargs (toAsm $ Push (Local (Just 0))))
   toAsm (Label lname fname) = ["(" ++ fname ++ "." ++ lname ++")"]
@@ -258,7 +258,7 @@ initCall = [ "@256"
            , "@THAT"
            , "M=D"  -- THAT = 3000
            ]
-           ++ toAsm (Call "Sys.init" 0 "Sys" 0)
+           ++ toAsm (Call "Sys.init" 0 0)
 
 main :: IO ()
 main = do
@@ -284,5 +284,4 @@ main = do
   case vmCmds of
    Left err -> print err
    Right c -> writeFile outfile (unlines . (initCall ++) . concatMap toAsm $ c)
-   -- Right c -> writeFile outfile (unlines . concatMap toAsm $ c)
   return ()

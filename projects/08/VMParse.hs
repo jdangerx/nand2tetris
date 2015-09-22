@@ -18,9 +18,9 @@ data Command = Push Segment
              | Label String Filename
              | Goto String Filename
              | IfGoto String Filename
-             | Call String Int Filename JumpId
+             | Call String Int JumpId
              | Return
-             | Function String Int Filename
+             | Function String Int
              deriving Show
 
 data Segment = Argument Index
@@ -112,8 +112,7 @@ parseFunction =
     funcName <- many (alphaNum <|> oneOf "_.$:")
     spaces1
     numArgs <- read <$> many digit
-    (filename, _) <- getState
-    return $ Function funcName numArgs filename
+    return $ Function funcName numArgs
 
 parseCall :: Parsec String (Filename, Int) Command
 parseCall =
@@ -124,8 +123,8 @@ parseCall =
     spaces1
     numArgs <- read <$> many digit
     modifyState ((+ 1) <$>)
-    (filename, jId) <- getState
-    return $ Call funcName numArgs filename jId
+    (_, jId) <- getState
+    return $ Call funcName numArgs jId
 
 command :: Parsec String (Filename, Int) (Maybe Command)
 command =
