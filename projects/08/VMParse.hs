@@ -18,6 +18,9 @@ data Command = Push Segment
              | Label String Filename
              | Goto String Filename
              | IfGoto String Filename
+             | Call String Int Filename JumpId
+             | Return
+             | Function String Int Filename
              deriving Show
 
 data Segment = Argument Index
@@ -98,12 +101,42 @@ flow =
     filename <- fst <$> getState
     return $ cmd labelName filename
 
+parseReturn :: Parsec String (Filename, Int) Command
+parseReturn = string "return" >> return Return
+
+parseFunction :: Parsec String (Filename, Int) Command
+parseFunction =
+  do
+    string "function"
+    spaces1
+    funcName <- many (alphaNum <|> oneOf "_.$:")
+    spaces1
+    numArgs <- read <$> many digit
+    (filename, _) <- getState
+    return $ Function funcName numArgs filename
+
+parseCall :: Parsec String (Filename, Int) Command
+parseCall =
+  do
+    string "call"
+    spaces1
+    funcName <- many (alphaNum <|> oneOf "_.$:")
+    spaces1
+    numArgs <- read <$> many digit
+    modifyState ((+ 1) <$>)
+    (filename, jId) <- getState
+    return $ Call funcName numArgs filename jId
+
 command :: Parsec String (Filename, Int) (Maybe Command)
 command =
   do
     cmd <- optionMaybe (try arithmetic
                        <|> try pushPop
-                       <|> try flow)
+                       <|> try flow
+                       <|> try parseReturn
+                       <|> try parseFunction
+                       <|> try parseCall
+                       )
     optional comment
     many (noneOf "\n\r")
     return cmd

@@ -63,6 +63,91 @@ class Assemblable a where
   toAsm :: a -> [String]
 
 instance Assemblable Command where
+  toAsm (Call func nargs _ jId) =
+    let returnId = func ++"_return_" ++ show jId
+    in
+     [ "@" ++ returnId, "D=A" ] ++ pushDSP ++  -- push return address
+     [ "@LCL", "D=M" ] ++ pushDSP ++  -- push LCL
+     [ "@ARG", "D=M" ] ++ pushDSP ++  -- push ARG
+     [ "@THIS", "D=M" ] ++ pushDSP ++  -- push THIS
+     [ "@THAT", "D=M" ] ++ pushDSP ++  -- push THAT
+     [ "@SP" -- A = &SP
+     , "D=M"  -- D = SP
+     , "@" ++ show nargs
+     , "D=D-A"  -- D = SP - nargs
+     , "@5"
+     , "D=D-A"  -- D = SP - nargs - 5
+     , "@ARG"
+     , "M=D"  -- ARG = SP - nargs - 5
+     , "@SP" -- A = &SP
+     , "D=M"  -- D = SP
+     , "@LCL"  -- A = &LCL
+     , "M=D"  -- LCL = SP
+     , "@"++func
+     , "0;JMP"
+     , "(" ++ returnId ++ ")"]
+  toAsm Return =
+    [ "@LCL" -- A = &LCL
+    , "D=M"  -- D = LCL
+    , "@R13"
+    , "M=D" -- R13 = LCL, aka the beginning of the frame
+    , "@5"
+    , "D=D-A" -- D = LCL - 5 == &RET
+    , "A=D"
+    , "D=M" -- D = RET
+    , "@R14"
+    , "M=D" -- R14 = returnAddress
+    , "@SP"
+    , "M=M-1"
+    , "A=M"
+    , "D=M" -- D = tip
+    , "@ARG" -- A = &ARG
+    , "A=M"  -- A = ARG
+    , "M=D"  -- *ARG = tip (this will be the new tip of the stack after return)
+    , "D=A" -- D = ARG
+    , "@SP"
+    , "M=D+1" -- SP = ARG + 1
+
+    , "@R13"
+    , "D=M-1" -- D = LCL - 1
+    , "A=D"
+    , "D=M" -- D = *(LCL-1)
+    , "@THAT"
+    , "M=D" -- *THAT = *(LCL - 1)
+
+    , "@R13"
+    , "D=M" -- D = LCL
+    , "@2"
+    , "D=D-A" -- D = LCL - 2
+    , "A=D"
+    , "D=M" -- D = *(LCL-2)
+    , "@THIS"
+    , "M=D" -- *THIS = *(LCL - 2)
+
+    , "@R13"
+    , "D=M" -- D = LCL
+    , "@3"
+    , "D=D-A" -- D = LCL - 3
+    , "A=D"
+    , "D=M" -- D = *(LCL-3)
+    , "@ARG"
+    , "M=D" -- *ARG = *(LCL - 3)
+
+    , "@R13"
+    , "D=M" -- D = LCL
+    , "@4"
+    , "D=D-A" -- D = LCL - 4
+    , "A=D"
+    , "D=M" -- D = *(LCL-4)
+    , "@LCL"
+    , "M=D" -- *LCL = *(LCL - 4)
+
+    , "@R14" -- A = RET
+    , "A=M"
+    , "0;JMP"]
+  toAsm (Function func nargs _) =
+    ["(" ++ func ++ ")"] ++
+    concat (replicate nargs (toAsm $ Push (Local (Just 0))))
   toAsm (Label lname fname) = ["(" ++ fname ++ "." ++ lname ++")"]
   toAsm (Goto lname fname) = ["@" ++ fname ++ "." ++ lname, "0;JMP"]
   toAsm (IfGoto lname fname) =
@@ -150,8 +235,30 @@ instance Assemblable Command where
 parseFile :: FilePath -> IO (Either ParseError [Command])
 parseFile infile =
   liftM
-  (runParser parseVM (takeBaseName infile, 0) infile)
+  (runParser parseVM (takeBaseName infile, 1) infile)
   (readFile infile)
+
+initCall :: [String]
+initCall = [ "@256"
+           , "D=A"
+           , "@SP"
+           , "M=D"  -- SP = 256
+           , "@LCL"
+           , "M=D"  -- LCL = 256
+           , "@251"
+           , "D=A"
+           , "@ARG"
+           , "M=D"  -- ARG = 251
+           , "@3000"
+           , "D=A"
+           , "@THIS"
+           , "M=D"  -- THIS = 3000
+           , "@4000"
+           , "D=A"
+           , "@THAT"
+           , "M=D"  -- THAT = 3000
+           ]
+           ++ toAsm (Call "Sys.init" 0 "Sys" 0)
 
 main :: IO ()
 main = do
@@ -176,5 +283,6 @@ main = do
   vmCmds <- (concat <$>) <$> (sequence <$> mapM parseFile infiles)
   case vmCmds of
    Left err -> print err
-   Right c -> writeFile outfile (unlines . concatMap toAsm $ c)
+   Right c -> writeFile outfile (unlines . (initCall ++) . concatMap toAsm $ c)
+   -- Right c -> writeFile outfile (unlines . concatMap toAsm $ c)
   return ()
