@@ -10,9 +10,9 @@ data Command = Push Segment
              | Add
              | Sub
              | Neg
-             | Eq JumpId
-             | Gt JumpId
-             | Lt JumpId
+             | Eq Filename JumpId
+             | Gt Filename JumpId
+             | Lt Filename JumpId
              | And
              | Or
              | Not
@@ -74,12 +74,12 @@ arithmetic =
   try (string "add" >> return Add)
   <|> try (string "sub" >> return Sub)
   <|> try (string "neg" >> return Neg)
-  <|> try (pure Eq <*>
-           (string "eq" >> modifyState ((+ 1) <$>) >> snd <$> getState))
-  <|> try (pure Gt <*>
-           (string "gt" >> modifyState ((+ 1) <$>) >> snd <$> getState))
-  <|> try (pure Lt <*>
-           (string "lt" >> modifyState ((+ 1) <$>) >> snd <$> getState))
+  <|> try (pure (uncurry Eq) <*>
+           (string "eq" >> modifyState ((+ 1) <$>) >> getState))
+  <|> try (pure (uncurry Gt) <*>
+           (string "gt" >> modifyState ((+ 1) <$>) >> getState))
+  <|> try (pure (uncurry Lt) <*>
+           (string "lt" >> modifyState ((+ 1) <$>) >> getState))
   <|> try (string "and" >> return And)
   <|> try (string "or" >> return Or)
   <|> try (string "not" >> return Not)
