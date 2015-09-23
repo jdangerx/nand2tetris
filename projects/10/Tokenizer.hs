@@ -29,8 +29,8 @@ kwMap = M.fromList
   , (If, "if") , (Else, "else") , (While, "while") , (Return, "return") ]
 
 data Symbol = OBrace | CBrace | OParen | CParen | OBracket | CBracket | Dot
-            | Comma | Semi | Plus | Minus | Star | Slash | Amp | Pipe | Lt
-            | Gt | Eq | Tilde
+            | Comma | Semi | Plus | Minus | Star | Slash | Amp | Pipe | LAngle
+            | RAngle | Eq | Tilde
             deriving (Show, Ord, Eq)
 
 symMap :: M.Map Symbol String
@@ -38,7 +38,7 @@ symMap = M.fromList
   [ (OBrace, "{") , (CBrace, "}") , (OParen, "(") , (CParen, ")")
   , (OBracket, "[") , (Dot, ".") , (Comma, ",") , (CBracket, "]") , (Semi, ";")
   , (Plus, "+") , (Minus, "-") , (Star, "*") , (Slash, "/") , (Amp, "&")
-  , (Pipe, "|") , (Lt, "<") , (Gt, ">") , (Eq, "=") , (Tilde, "~") ]
+  , (Pipe, "|") , (LAngle, "<") , (RAngle, ">") , (Eq, "=") , (Tilde, "~") ]
 
 type IntCons = Integer
 type StringCons = String
@@ -54,8 +54,8 @@ instance XMLWriter Keyword where
 
 instance XMLWriter Symbol where
   toXML sym =
-    let xmlSym Lt = "&lt;"
-        xmlSym Gt = "&gt;"
+    let xmlSym LAngle = "&lt;"
+        xmlSym RAngle = "&gt;"
         xmlSym Amp = "&amp;"
         xmlSym s = fromMaybe "" . M.lookup s $ symMap
     in "<symbol> " ++ xmlSym sym ++ " </symbol>"

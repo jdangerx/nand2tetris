@@ -1,8 +1,11 @@
 module Main where
 
+import Data.Functor.Identity (Identity)
+import qualified Data.Map as M
 import System.Environment
 import System.FilePath
-import Text.Parsec
+import Text.Parsec.Prim
+import Text.Parsec.Combinator
 
 import Tokenizer
 
@@ -53,11 +56,21 @@ data SubroutineCall = Naked SubrName [Expression]
                     | Method Identifier SubrName [Expression]
 
 data UnaryOp = Neg | Not
+             deriving (Show, Eq, Ord)
 
 data Op = Add | Sub | Mul | Div | And | Or | Lt | Gt | Equals
+        deriving (Show, Eq, Ord)
+
+opMap :: M.Map Op Symbol
+opMap = M.fromList
+  [ (Add, Plus), (Sub, Minus), (Mul, Star), (Div, Slash), (And, Amp), (Or, Pipe)
+  , (Lt, LAngle), (Gt, RAngle), (Equals, Eq) ]
 
 type SubrName = Identifier
 
+op :: ParsecT [Terminal] () Identity Op
+op = return Add
+  
 
 main :: IO ()
 main = do
