@@ -5,7 +5,8 @@ import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (javaStyle)
 
-data Element = Keyword Keyword
+
+data Terminal = Keyword Keyword
              | Symbol Symbol
              | IntCons IntCons
              | StringCons StringCons
@@ -18,7 +19,7 @@ type IntCons = Integer
 type StringCons = String
 type Identifier = String
 
-toXML :: Element -> String
+toXML :: Terminal -> String
 toXML (Keyword s) = "<keyword> " ++ s ++ " </keyword>"
 toXML (Symbol ">") = "<symbol> &gt; </symbol>"
 toXML (Symbol "<") = "<symbol> &lt; </symbol>"
@@ -60,8 +61,8 @@ comment =
   try ((string "/*" <|> string "/**") >> manyTill anyChar (try $ string "*/") >> return ())
   <|> try (string "//" >> (many . noneOf $ "\n\r") >> return ())
 
-elt :: Parser Element
-elt =
+term :: Parser Terminal
+term =
   (IntCons <$> try natural)
   <|> (StringCons <$> try stringLiteral)
   <|> (Identifier <$> try identifier)
@@ -73,14 +74,14 @@ elt =
                    (["{", "}", "[", "]", "(", ")"] ++ P.reservedOpNames jackDef)))
 
 
-tokenizeLine :: Parser [Element]
+tokenizeLine :: Parser [Terminal]
 tokenizeLine = do
   optional comment
-  elts <- many elt
-  eltss <- many {- for this abuse -} (comment >> {- of block cmts -} many elt)
-  return $ concat (elts : eltss)
+  terms <- many term
+  termss <- many {- for this abuse -} (comment >> {- of block cmts -} many term)
+  return $ concat (terms : termss)
 
-tokenizeSrc :: Parser [Element]
+tokenizeSrc :: Parser [Terminal]
 tokenizeSrc = do
   ls <- tokenizeLine `sepBy` oneOf "\n\r"
   return $ concat ls
