@@ -10,39 +10,25 @@ import Tokenizer
 newlineToReturn :: String -> String
 newlineToReturn = foldr (\c s -> if c == '\n' then '\r':'\n':s else c:s) ""
 
--- data Class = Class { className :: ClassName
---                    , classVarDecs :: [ClassVarDec]
---                    , subroutineDecs :: [SubroutineDec] }
+data Expression = Expression Term [(Op, Term)]
 
--- data ClassVarDec = ClassVarDec { varType :: Type
---                                , varNames :: [VarName] }
+data Term = IntTerm IntCons
+          | StrTerm StringCons
+          | KwTerm Keyword
+          | VarName Identifier
+          | ArrInd Identifier Expression
+          | SubrCall SubroutineCall
+          | Expr Expression
+          | UnOp UnaryOp Term
 
--- data Type = IntT
---           | CharT
---           | BoolT
---           | ClassT ClassName
+data SubroutineCall = Naked SubrName [Expression]
+                    | Method Identifier SubrName [Expression]
 
--- data SubroutineDec = SubroutineDec { retType :: Type
---                                    , subroutineName :: SubroutineName
---                                    , paramList :: ParameterList
---                                    , subroutineBody :: SubroutineBody}
+data UnaryOp = Neg | Not
 
--- type ParameterList = [Identifier]
+data Op = Add | Sub | Mul | Div | And | Or | Lt | Gt | Equals
 
--- data SubroutineBody = SubroutineBody { varDecs :: [VarDec]
---                                      , statements :: [Stmt] }
-
--- type VarDec = (Type, [VarName])
-
--- type ClassName = Identifier
--- type SubroutineName = Identifier
--- type VarName = Identifier
-
--- data Stmt = LetStmt VarName (Maybe Expr) Expr
---           | IfStmt Expr [Stmt] (Maybe [Stmt])
---           | WhileStmt Expr [Stmt]
---           | DoStmt SubroutineCall
---           | ReturnStmt (Maybe Expr)
+type SubrName = Identifier
 
 
 main :: IO ()
