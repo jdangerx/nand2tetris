@@ -14,14 +14,14 @@ data Terminal = Keyword Keyword
               | Identifier Identifier
                 deriving Show
 
-data Keyword = Class | Constructor | Function | Method | Field | Static | Var
+data Keyword = ClassKW | Constructor | Function | Method | Field | Static | Var
              | Int | Char | Boolean | Void | TrueKW | FalseKW | Null | This | Let
              | Do | If | Else | While | Return
              deriving (Show, Ord, Eq)
 
 kwMap :: M.Map Keyword String
 kwMap = M.fromList
-  [ (Class, "class"), (Constructor, "constructor"), (Function, "function")
+  [ (ClassKW, "class"), (Constructor, "constructor"), (Function, "function")
   , (Method, "method") , (Field, "field") , (Static, "static")
   , (Var, "var") , (Int, "int") , (Char, "char") , (Boolean, "boolean")
   , (Void, "void") , (TrueKW, "true") , (FalseKW, "false")
