@@ -10,6 +10,23 @@ import Text.Parsec.Combinator
 
 import Tokenizer
 
+oParen :: Parser Terminal
+oParen = termIs $ Symbol OParen
+
+cParen :: Parser Terminal
+cParen = termIs $ Symbol CParen
+
+oBrace :: Parser Terminal
+oBrace = termIs $ Symbol OBrace
+
+cBrace :: Parser Terminal
+cBrace = termIs $ Symbol CBrace
+
+oBracket :: Parser Terminal
+oBracket = termIs $ Symbol OBracket
+
+cBracket :: Parser Terminal
+cBracket = termIs $ Symbol CBracket
 
 newlineToReturn :: String -> String
 newlineToReturn = foldr (\c s -> if c == '\n' then '\r':'\n':s else c:s) ""
@@ -95,7 +112,7 @@ classVarType = try (StaticVar <$ termIs (Keyword Static))
                <|> try (FieldVar <$ termIs (Keyword Field))
 
 subrDec :: Parser SubroutineDec
-subrDec = 
+subrDec =
   SubroutineDec <$> parseFuncType <*> parseRetType <*> parseIdent
   <*> between oParen cParen paramList <*> subrBody
 
@@ -126,13 +143,10 @@ subrBody = between oBrace cBrace
            (SubroutineBody <$> many varDec <*> many statement)
 
 varDec :: Parser VarDec
-varDec = do
-  termIs (Keyword Var)
-  t <- parseType
-  vars <- (:) <$> parseIdent <*> many (termIs (Symbol Comma) *> parseIdent)
-  termIs (Symbol Semi)
-  return $ VarDec t vars
-
+varDec =
+  VarDec <$> (termIs (Keyword Var) *> parseType)
+  <*> (parseIdent `sepBy` termIs (Symbol Comma))
+  <* termIs (Symbol Semi)
 
 statement :: Parser Statement
 statement = try letStmt
@@ -151,24 +165,6 @@ letStmt = do
   termIs (Symbol Semi)
   return $ LetStmt varName indexMaybe expr
 
-oParen :: Parser Terminal
-oParen = termIs $ Symbol OParen
-
-cParen :: Parser Terminal
-cParen = termIs $ Symbol CParen
-
-oBrace :: Parser Terminal
-oBrace = termIs $ Symbol OBrace
-
-cBrace :: Parser Terminal
-cBrace = termIs $ Symbol CBrace
-
-oBracket :: Parser Terminal
-oBracket = termIs $ Symbol OBracket
-
-cBracket :: Parser Terminal
-cBracket = termIs $ Symbol CBracket
-
 ifStmt :: Parser Statement
 ifStmt = do
   termIs (Keyword If)
@@ -186,14 +182,13 @@ whileStmt = do
   return $ WhileStmt expr stmts
 
 doStmt :: Parser Statement
-doStmt = termIs (Keyword Return)
-         >> DoStmt <$> subrCall
-         <* termIs (Symbol Semi)
+doStmt =
+  DoStmt <$> (termIs (Keyword Do) *> subrCall <* termIs (Symbol Semi))
 
 returnStmt :: Parser Statement
-returnStmt = termIs (Keyword Return)
-             >> RetStmt <$> optionMaybe expression
-             <* termIs (Symbol Semi)
+returnStmt = RetStmt <$> (termIs (Keyword Return)
+             *> optionMaybe expression
+             <* termIs (Symbol Semi))
 
 expression :: Parser Expression
 expression = do
@@ -205,10 +200,7 @@ expression = do
   return $ Expression t rest
 
 expressionList :: Parser [Expression]
-expressionList = do
-  expr <- expression
-  rest <- many (termIs (Symbol Comma) *> expression)
-  return $ expr : rest
+expressionList = expression `sepBy` termIs (Symbol Comma)
 
 singletonTerm :: Parser Term
 singletonTerm = token show (const $ initialPos "noPos")
@@ -221,12 +213,7 @@ singletonTerm = token show (const $ initialPos "noPos")
                 )
 
 arrayIndex :: Parser Term
-arrayIndex = do
-  Identifier varName <- satisfyT isIdentifier
-  termIs $ Symbol OBracket
-  expr <- expression
-  termIs $ Symbol CBracket
-  return $ ArrInd varName expr
+arrayIndex = ArrInd <$> parseIdent <*> between oBracket cBracket expression
 
 term :: Parser Term
 term = try singletonTerm
@@ -238,14 +225,13 @@ term = try singletonTerm
 subrCall :: Parser SubroutineCall
 subrCall =
   do
-    parentName <- optionMaybe (satisfyT isIdentifier)
-    termIs $ Symbol Dot
+    parentName <- optionMaybe (parseIdent <* termIs (Symbol Dot))
     srName <- parseIdent
     termIs $ Symbol OParen
     exprs <- expressionList
     termIs $ Symbol CParen
     case parentName of
-     Just (Identifier pn) -> return $ CompoundSubrCall pn srName exprs
+     Just pn -> return $ CompoundSubrCall pn srName exprs
      Nothing -> return $ NakedSubrCall srName exprs
 
 unaryOp :: Parser UnaryOp
