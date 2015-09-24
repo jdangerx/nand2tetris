@@ -15,6 +15,14 @@ data Terminal = Keyword Keyword
               | Identifier Identifier
                 deriving (Show, Eq)
 
+isIdentifier (Identifier _) = True
+isIdentifier _ = False
+
+termConsIs :: (a -> Terminal) -> Terminal -> Bool
+termConsIs constructor term = case term of
+                               constructor _ -> True
+                               _ -> False
+
 data Keyword = ClassKW | Constructor | Function | Method | Field | Static | Var
              | Int | Char | Boolean | Void | TrueKW | FalseKW | Null | This | Let
              | Do | If | Else | While | Return
@@ -110,8 +118,8 @@ parseSymbol :: Parser Symbol
 parseSymbol = parseFromMap symbol symMap
   -- foldr (\(sym, s) p -> try (sym <$ symbol s) <|> p) parserZero (M.toList symMap)
 
-term :: Parser Terminal
-term =
+terminal :: Parser Terminal
+terminal =
   (IntCons <$> try natural)
   <|> (StringCons <$> try stringLiteral)
   <|> (Identifier <$> try identifier)
@@ -121,8 +129,8 @@ term =
 tokenizeLine :: Parser [Terminal]
 tokenizeLine = do
   optional comment
-  terms <- many term
-  termss <- many {- for this abuse -} (comment >> {- of block cmts -} many term)
+  terms <- many terminal
+  termss <- many {- for this abuse -} (comment >> {- of block cmts -} many terminal)
   return $ concat (terms : termss)
 
 tokenizeSrc :: Parser [Terminal]

@@ -72,6 +72,23 @@ opMap = M.fromList
 
 type SubrName = Identifier
 
+expression :: Parser Expression
+expression = do
+  t <- term
+  rest <- many (do
+                  op' <- op
+                  t' <- term
+                  return (op', t'))
+  return $ Expression t rest
+
+term :: Parser Term
+term = do
+  (IntCons intCons <- satisfyT (\t -> case t of
+                                    IntCons _ -> True
+                                    _ -> False)) 
+  someTerm <- case something of
+  return $ IntTerm intCons
+  
 -- data Term = IntTerm IntCons
 --           | StrTerm StringCons
 --           | KwTerm Keyword
