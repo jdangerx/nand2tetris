@@ -26,11 +26,13 @@ data ClassVarType = StaticVar | FieldVar
 data Type = IntT | CharT | BoolT | ClassName Identifier
 
 data SubroutineDec =
-  SubroutineDec FuncType RetType Identifier [Identifier] SubroutineBody
+  SubroutineDec FuncType RetType Identifier [Parameter] SubroutineBody
+
+data Parameter = Param Type Identifier
 
 data FuncType = ConstructorF | FunctionF | MethodF
 
-data RetType = Void | RetType Type
+data RetType = VoidT | RetType Type
 
 data SubroutineBody =
   SubroutineBody [VarDec] [Statement]
@@ -42,7 +44,7 @@ data Statement =
   | IfStmt Expression [Statement] (Maybe [Statement])
   | WhileStmt Expression [Statement]
   | DoStmt SubroutineCall
-  | RetStm (Maybe Expression)
+  | RetStmt (Maybe Expression)
 
 data Expression = Expression Term [(Op, Term)]
 
@@ -55,8 +57,8 @@ data Term = IntTerm IntCons
           | Expr Expression
           | UnOp UnaryOp Term
 
-data SubroutineCall = Naked SubrName [Expression]
-                    | Method Identifier SubrName [Expression]
+data SubroutineCall = NakedSubrCall SubrName [Expression]
+                    | CompoundSubrCall Identifier SubrName [Expression]
 
 data UnaryOp = Neg | Not
              deriving (Show, Eq, Ord)
@@ -72,6 +74,127 @@ opMap = M.fromList
 
 type SubrName = Identifier
 
+parseIdent :: Parser Identifier
+parseIdent = do
+  Identifier s <- satisfyT isIdentifier
+  return s
+
+parseClass :: Parser Class
+parseClass =
+  Class <$> (termIs (Keyword ClassKW) *> parseIdent)
+  <*> (oBrace *> many classVarDec)
+  <*> (many subrDec <* cBrace)
+
+classVarDec :: Parser ClassVarDec
+classVarDec =
+  ClassVarDec <$> classVarType <*> parseType
+  <*> parseIdent `sepBy` termIs (Symbol Comma)
+
+classVarType :: Parser ClassVarType
+classVarType = try (StaticVar <$ termIs (Keyword Static))
+               <|> try (FieldVar <$ termIs (Keyword Field))
+
+subrDec :: Parser SubroutineDec
+subrDec = 
+  SubroutineDec <$> parseFuncType <*> parseRetType <*> parseIdent
+  <*> between oParen cParen paramList <*> subrBody
+
+parseFuncType :: Parser FuncType
+parseFuncType =
+  try (ConstructorF <$ termIs (Keyword Constructor))
+  <|> try (FunctionF <$ termIs (Keyword Function))
+  <|> try (MethodF <$ termIs (Keyword Method))
+
+parseRetType :: Parser RetType
+parseRetType =
+  try (RetType <$> parseType)
+  <|> try (VoidT <$ termIs (Keyword Void))
+
+paramList :: Parser [Parameter]
+paramList =
+  (Param <$> parseType <*> parseIdent) `sepBy` termIs (Symbol Comma)
+
+parseType :: Parser Type
+parseType =
+  try (IntT <$ termIs (Keyword Int))
+  <|> try (CharT <$ termIs (Keyword Char))
+  <|> try (BoolT <$ termIs (Keyword Boolean))
+  <|> try (ClassName <$> parseIdent)
+
+subrBody :: Parser SubroutineBody
+subrBody = between oBrace cBrace
+           (SubroutineBody <$> many varDec <*> many statement)
+
+varDec :: Parser VarDec
+varDec = do
+  termIs (Keyword Var)
+  t <- parseType
+  vars <- (:) <$> parseIdent <*> many (termIs (Symbol Comma) *> parseIdent)
+  termIs (Symbol Semi)
+  return $ VarDec t vars
+
+
+statement :: Parser Statement
+statement = try letStmt
+            <|> try ifStmt
+            <|> try returnStmt
+            <|> try doStmt
+            <|> try whileStmt
+
+letStmt :: Parser Statement
+letStmt = do
+  termIs (Keyword Let)
+  varName <- parseIdent
+  indexMaybe <- optionMaybe $ between oBracket cBracket expression
+  termIs (Symbol Eq)
+  expr <- expression
+  termIs (Symbol Semi)
+  return $ LetStmt varName indexMaybe expr
+
+oParen :: Parser Terminal
+oParen = termIs $ Symbol OParen
+
+cParen :: Parser Terminal
+cParen = termIs $ Symbol CParen
+
+oBrace :: Parser Terminal
+oBrace = termIs $ Symbol OBrace
+
+cBrace :: Parser Terminal
+cBrace = termIs $ Symbol CBrace
+
+oBracket :: Parser Terminal
+oBracket = termIs $ Symbol OBracket
+
+cBracket :: Parser Terminal
+cBracket = termIs $ Symbol CBracket
+
+ifStmt :: Parser Statement
+ifStmt = do
+  termIs (Keyword If)
+  expr <- between oParen cParen expression
+  stmts <- between oBrace cBrace (many statement)
+  elseStmts <- optionMaybe
+              (termIs (Keyword Else) >> between oBrace cBrace (many statement))
+  return $ IfStmt expr stmts elseStmts
+
+whileStmt :: Parser Statement
+whileStmt = do
+  termIs (Keyword While)
+  expr <- between oParen cParen expression
+  stmts <- between oBrace cBrace (many statement)
+  return $ WhileStmt expr stmts
+
+doStmt :: Parser Statement
+doStmt = termIs (Keyword Return)
+         >> DoStmt <$> subrCall
+         <* termIs (Symbol Semi)
+
+returnStmt :: Parser Statement
+returnStmt = termIs (Keyword Return)
+             >> RetStmt <$> optionMaybe expression
+             <* termIs (Symbol Semi)
+
 expression :: Parser Expression
 expression = do
   t <- term
@@ -81,32 +204,49 @@ expression = do
                   return (op', t'))
   return $ Expression t rest
 
+expressionList :: Parser [Expression]
+expressionList = do
+  expr <- expression
+  rest <- many (termIs (Symbol Comma) *> expression)
+  return $ expr : rest
+
+singletonTerm :: Parser Term
+singletonTerm = token show (const $ initialPos "noPos")
+                (\t -> case t of
+                  IntCons i -> Just (IntTerm i)
+                  StringCons str -> Just (StrTerm str)
+                  Keyword str -> Just (KwTerm str)
+                  Identifier str -> Just (VarName str)
+                  _ -> Nothing
+                )
+
+arrayIndex :: Parser Term
+arrayIndex = do
+  Identifier varName <- satisfyT isIdentifier
+  termIs $ Symbol OBracket
+  expr <- expression
+  termIs $ Symbol CBracket
+  return $ ArrInd varName expr
+
 term :: Parser Term
-term = do
-  (IntCons intCons <- satisfyT (\t -> case t of
-                                    IntCons _ -> True
-                                    _ -> False)) 
-  someTerm <- case something of
-  return $ IntTerm intCons
-  
--- data Term = IntTerm IntCons
---           | StrTerm StringCons
---           | KwTerm Keyword
---           | VarName Identifier
---           | ArrInd Identifier Expression
---           | SubrCall SubroutineCall
---           | Expr Expression
---           | UnOp UnaryOp Term
-subRCall :: Parser SubroutineCall
-subRCall =
+term = try singletonTerm
+       <|> try arrayIndex
+       <|> try (SubrCall <$> subrCall)
+       <|> try (Expr <$> expression)
+       <|> try (UnOp <$> unaryOp <*> term)
+
+subrCall :: Parser SubroutineCall
+subrCall =
   do
     parentName <- optionMaybe (satisfyT isIdentifier)
     termIs $ Symbol Dot
-    Identifier srName <- satisfyT isIdentifier
+    srName <- parseIdent
     termIs $ Symbol OParen
-    -- exprs <- many expression
+    exprs <- expressionList
     termIs $ Symbol CParen
-    return $ Naked srName []
+    case parentName of
+     Just (Identifier pn) -> return $ CompoundSubrCall pn srName exprs
+     Nothing -> return $ NakedSubrCall srName exprs
 
 unaryOp :: Parser UnaryOp
 unaryOp = try (Neg <$ termIs (Symbol Minus))

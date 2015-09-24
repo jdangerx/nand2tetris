@@ -15,14 +15,6 @@ data Terminal = Keyword Keyword
               | Identifier Identifier
                 deriving (Show, Eq)
 
-isIdentifier (Identifier _) = True
-isIdentifier _ = False
-
-termConsIs :: (a -> Terminal) -> Terminal -> Bool
-termConsIs constructor term = case term of
-                               constructor _ -> True
-                               _ -> False
-
 data Keyword = ClassKW | Constructor | Function | Method | Field | Static | Var
              | Int | Char | Boolean | Void | TrueKW | FalseKW | Null | This | Let
              | Do | If | Else | While | Return
