@@ -3,6 +3,7 @@ module Tokenizer where
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Text.Parsec
+import Text.Parsec.Pos
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (javaStyle)
@@ -12,7 +13,7 @@ data Terminal = Keyword Keyword
               | IntCons IntCons
               | StringCons StringCons
               | Identifier Identifier
-                deriving Show
+                deriving (Show, Eq)
 
 data Keyword = ClassKW | Constructor | Function | Method | Field | Static | Var
              | Int | Char | Boolean | Void | TrueKW | FalseKW | Null | This | Let
@@ -97,13 +98,17 @@ comment =
   try ((string "/*" <|> string "/**") >> manyTill anyChar (try $ string "*/") >> return ())
   <|> try (string "//" >> (many . noneOf $ "\n\r") >> return ())
 
+parseFromMap :: (a -> Parsec s () a) -> M.Map b a -> Parsec s () b
+parseFromMap f m =
+  foldr (\(b, s) p -> try (b <$ f s) <|> p) parserZero (M.toList m)
+
 parseKeyword :: Parser Keyword
-parseKeyword =
-  foldr (\(kw, s) p -> try (kw <$ symbol s) <|> p) parserZero (M.toList kwMap)
+parseKeyword = parseFromMap symbol kwMap
+  -- foldr (\(kw, s) p -> try (kw <$ symbol s) <|> p) parserZero (M.toList kwMap)
 
 parseSymbol :: Parser Symbol
-parseSymbol =
-  foldr (\(sym, s) p -> try (sym <$ symbol s) <|> p) parserZero (M.toList symMap)
+parseSymbol = parseFromMap symbol symMap
+  -- foldr (\(sym, s) p -> try (sym <$ symbol s) <|> p) parserZero (M.toList symMap)
 
 term :: Parser Terminal
 term =
@@ -124,3 +129,14 @@ tokenizeSrc :: Parser [Terminal]
 tokenizeSrc = do
   ls <- tokenizeLine `sepBy` oneOf "\n\r"
   return $ concat ls
+
+satisfyT :: (Terminal -> Bool) -> Parsec [Terminal] () Terminal
+satisfyT p = token show (const $ initialPos "noPos")
+             (\t -> if p t then Just t else Nothing)
+
+termIs :: Terminal -> Parsec [Terminal] () Terminal
+termIs t = satisfyT (== t)
+
+isIdentifier :: Terminal -> Bool
+isIdentifier (Identifier _) = True
+isIdentifier _ = False
