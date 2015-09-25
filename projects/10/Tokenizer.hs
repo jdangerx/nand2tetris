@@ -104,11 +104,9 @@ parseFromMap f m =
 
 parseKeyword :: Parser Keyword
 parseKeyword = parseFromMap symbol kwMap
-  -- foldr (\(kw, s) p -> try (kw <$ symbol s) <|> p) parserZero (M.toList kwMap)
 
 parseSymbol :: Parser Symbol
 parseSymbol = parseFromMap symbol symMap
-  -- foldr (\(sym, s) p -> try (sym <$ symbol s) <|> p) parserZero (M.toList symMap)
 
 terminal :: Parser Terminal
 terminal =

@@ -35,26 +35,36 @@ type Parser a = Parsec [Terminal] () a
 
 data Class =
   Class Identifier [ClassVarDec] [SubroutineDec]
+  deriving Show
 
 data ClassVarDec =
   ClassVarDec ClassVarType Type [Identifier]
+  deriving Show
 
 data ClassVarType = StaticVar | FieldVar
+                  deriving Show
 data Type = IntT | CharT | BoolT | ClassName Identifier
+          deriving Show
 
 data SubroutineDec =
   SubroutineDec FuncType RetType Identifier [Parameter] SubroutineBody
+  deriving Show
 
 data Parameter = Param Type Identifier
+               deriving Show
 
 data FuncType = ConstructorF | FunctionF | MethodF
+              deriving Show
 
 data RetType = VoidT | RetType Type
+             deriving Show
 
 data SubroutineBody =
   SubroutineBody [VarDec] [Statement]
+  deriving Show
 
 data VarDec = VarDec Type [Identifier]
+            deriving Show
 
 data Statement =
   LetStmt Identifier (Maybe Expression) Expression
@@ -62,8 +72,10 @@ data Statement =
   | WhileStmt Expression [Statement]
   | DoStmt SubroutineCall
   | RetStmt (Maybe Expression)
+  deriving Show
 
 data Expression = Expression Term [(Op, Term)]
+                deriving Show
 
 data Term = IntTerm IntCons
           | StrTerm StringCons
@@ -73,9 +85,11 @@ data Term = IntTerm IntCons
           | SubrCall SubroutineCall
           | Expr Expression
           | UnOp UnaryOp Term
+          deriving Show
 
 data SubroutineCall = NakedSubrCall SubrName [Expression]
                     | CompoundSubrCall Identifier SubrName [Expression]
+                    deriving Show
 
 data UnaryOp = Neg | Not
              deriving (Show, Eq, Ord)
@@ -99,8 +113,8 @@ parseIdent = do
 parseClass :: Parser Class
 parseClass =
   Class <$> (termIs (Keyword ClassKW) *> parseIdent)
-  <*> (oBrace *> many classVarDec)
-  <*> (many subrDec <* cBrace)
+  <*> (oBrace *> many (classVarDec <?> "class variable declaration"))
+  <*> (many (subrDec <?> "subroutine declaration") <* cBrace)
 
 classVarDec :: Parser ClassVarDec
 classVarDec =
@@ -216,23 +230,27 @@ arrayIndex :: Parser Term
 arrayIndex = ArrInd <$> parseIdent <*> between oBracket cBracket expression
 
 term :: Parser Term
-term = try singletonTerm
-       <|> try arrayIndex
-       <|> try (SubrCall <$> subrCall)
-       <|> try (Expr <$> expression)
+term = try (SubrCall <$> subrCall)
+       <|> try (Expr <$> between oParen cParen expression)
        <|> try (UnOp <$> unaryOp <*> term)
+       <|> try arrayIndex
+       <|> try singletonTerm
 
 subrCall :: Parser SubroutineCall
 subrCall =
-  do
-    parentName <- optionMaybe (parseIdent <* termIs (Symbol Dot))
-    srName <- parseIdent
-    termIs $ Symbol OParen
-    exprs <- expressionList
-    termIs $ Symbol CParen
-    case parentName of
-     Just pn -> return $ CompoundSubrCall pn srName exprs
-     Nothing -> return $ NakedSubrCall srName exprs
+  try (NakedSubrCall <$> parseIdent <*> between oParen cParen expressionList)
+  <|> try (CompoundSubrCall <$> parseIdent
+           <*> (termIs (Symbol Dot) *> parseIdent)
+           <*> between oParen cParen expressionList)
+  -- do
+    -- parentName <- optionMaybe (parseIdent <* termIs (Symbol Dot))
+    -- srName <- parseIdent
+    -- termIs $ Symbol OParen
+    -- exprs <- expressionList
+    -- termIs $ Symbol CParen
+    -- case parentName of
+     -- Just pn -> return $ CompoundSubrCall pn srName exprs
+     -- Nothing -> return $ NakedSubrCall srName exprs
 
 unaryOp :: Parser UnaryOp
 unaryOp = try (Neg <$ termIs (Symbol Minus))
@@ -247,6 +265,8 @@ main = do
   let outfile = (++ "T1.xml") . dropExtension $ infile
   input <- readFile infile
   let toks = runParser tokenizeSrc () infile input
+  let parsed = runParser parseClass () infile <$> toks
+  print parsed
   case toks of
    Left err -> print err
    Right t -> writeFile outfile $
