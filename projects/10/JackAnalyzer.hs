@@ -1,12 +1,10 @@
 #! /usr/bin/env runhaskell
-module Main where
+module JackAnalyzer where
 
 import qualified Data.Map as M
-import Data.List (intercalate)
-import Data.Maybe (fromJust)
-import System.Directory
-import System.Environment
-import System.FilePath
+-- import System.Directory
+-- import System.Environment
+-- import System.FilePath
 import Text.Parsec.Pos
 import Text.Parsec.Prim
 import Text.Parsec (ParseError)
@@ -47,18 +45,16 @@ data ClassVarDec =
 
 data ClassVarType = StaticVar | FieldVar
                   deriving Show
+
 data Type = IntT | CharT | BoolT | ClassName Identifier
           deriving Show
 
 data SubroutineDec =
-  SubroutineDec FuncType RetType Identifier ParameterList SubroutineBody
+  SubroutineDec FuncType RetType Identifier [Parameter] SubroutineBody
   deriving Show
 
 data Parameter = Param Type Identifier
                deriving Show
-
-data ParameterList = ParameterList [Parameter]
-                   deriving Show
 
 data FuncType = ConstructorF | FunctionF | MethodF
               deriving Show
@@ -84,21 +80,6 @@ data Statement =
 data Expression = Expression Term [(Op, Term)]
                 deriving Show
 
-instance XMLWriter Expression where
-  toXML (Expression t rest) =
-    "<expression>\n" ++ toXML t ++ concatMap (\(a, b) -> toXML a ++ toXML b) rest
-    ++ "\n</expression>\n"
-
-data ExpressionList = ExpressionList [Expression]
-                    deriving Show
-
-
-instance XMLWriter ExpressionList where
-  toXML (ExpressionList ls) =
-    "<expressionList>\n"
-    ++ intercalate (toXML (Symbol Comma)) (map toXML ls)
-    ++ "\n</expressionList>\n"
-
 data Term = IntTerm IntCons
           | StrTerm StringCons
           | KwTerm Keyword
@@ -109,36 +90,15 @@ data Term = IntTerm IntCons
           | UnOp UnaryOp Term
           deriving Show
 
-instance XMLWriter Term where
-  toXML (ArrInd name index) =
-    "<term>\n" ++ toXML (Identifier name) ++ toXML (Symbol OBracket)
-    ++ toXML index ++ toXML (Symbol CBracket) ++ "\n</term>\n"
-
-data SubroutineCall = NakedSubrCall Identifier ExpressionList
-                    | CompoundSubrCall Identifier Identifier ExpressionList
+data SubroutineCall = NakedSubrCall Identifier [Expression]
+                    | CompoundSubrCall Identifier Identifier [Expression]
                     deriving Show
-
-instance XMLWriter SubroutineCall where
-  toXML (NakedSubrCall srn exprls) =
-    toXML (Identifier srn) ++ toXML (Symbol OParen) ++ toXML exprls
-    ++ toXML (Symbol CParen)
-  toXML (CompoundSubrCall pn srn exprls) =
-    toXML (Identifier pn) ++ toXML (Symbol Dot) ++ toXML (Identifier srn)
-    ++ toXML (Symbol OParen) ++ toXML exprls ++ toXML (Symbol CParen)
-
 
 data UnaryOp = Neg | Not
              deriving (Show, Eq, Ord)
 
-instance XMLWriter UnaryOp where
-  toXML Neg = toXML (Symbol Minus)
-  toXML Not = toXML (Symbol Tilde)
-
 data Op = Add | Sub | Mul | Div | And | Or | Lt | Gt | Equals
         deriving (Show, Eq, Ord)
-
-instance XMLWriter Op where
-  toXML o = toXML (fromJust $ M.lookup o opMap)
 
 opMap :: M.Map Op Terminal
 opMap = M.fromList
@@ -184,10 +144,9 @@ parseRetType =
   try (RetType <$> parseType)
   <|> try (VoidT <$ termIs (Keyword Void))
 
-paramList :: Parser ParameterList
+paramList :: Parser [Parameter]
 paramList =
-  ParameterList
-  <$> (Param <$> parseType <*> parseIdent) `sepBy` termIs (Symbol Comma)
+  (Param <$> parseType <*> parseIdent) `sepBy` termIs (Symbol Comma)
 
 parseType :: Parser Type
 parseType =
@@ -257,8 +216,8 @@ expression = do
                   return (op', t'))
   return $ Expression t rest
 
-expressionList :: Parser ExpressionList
-expressionList = ExpressionList <$> expression `sepBy` termIs (Symbol Comma)
+expressionList :: Parser [Expression]
+expressionList = expression `sepBy` termIs (Symbol Comma)
 
 singletonTerm :: Parser Term
 singletonTerm = token show (const $ initialPos "noPos")
@@ -300,20 +259,16 @@ parseFile infile = do
   return $ runParser tokenizeSrc () infile input
     >>= runParser parseClass () infile
 
-main :: IO ()
-main = do
-  [infile] <- getArgs
-  isFile <- doesFileExist infile
-  isDir <- doesDirectoryExist infile
-  infiles <- if isFile then return [infile]
-            else if isDir then
-                   map (combine infile) . filter ((== ".jack") . takeExtension)
-                   <$> getDirectoryContents infile
-                 else return []
-  classes <- mapM parseFile infiles
-  print classes
-  return ()
-  -- let toks = runParser tokenizeSrc () infile input
-  -- let parsed = runParser parseClass () infile <$> toks
-  -- print parsed
-
+-- main :: IO ()
+-- main = do
+  -- [infile] <- getArgs
+  -- isFile <- doesFileExist infile
+  -- isDir <- doesDirectoryExist infile
+  -- infiles <- if isFile then return [infile]
+            -- else if isDir then
+                   -- map (combine infile) . filter ((== ".jack") . takeExtension)
+                   -- <$> getDirectoryContents infile
+                 -- else return []
+  -- classes <- mapM parseFile infiles
+  -- print classes
+  -- return ()
