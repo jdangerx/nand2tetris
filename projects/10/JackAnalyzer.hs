@@ -2,9 +2,6 @@
 module JackAnalyzer where
 
 import qualified Data.Map as M
--- import System.Directory
--- import System.Environment
--- import System.FilePath
 import Text.Parsec.Pos
 import Text.Parsec.Prim
 import Text.Parsec (ParseError)
