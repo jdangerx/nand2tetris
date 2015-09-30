@@ -1,8 +1,11 @@
 #! /usr/bin/env runhaskell
 module Main where
 
+import Data.Functor.Identity (runIdentity)
+import Data.List (isInfixOf)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, fromJust)
+import Control.Monad.State
 import System.Directory
 import System.Environment
 import System.FilePath
@@ -61,115 +64,164 @@ instance Scope SubroutineDec where
   getST (SubroutineDec _ _ _ params (SubroutineBody vardecs _))
     = foldl (flip updateST) (foldl (flip updateST) initSRScope params) vardecs
 
-data Scopz = Scopz { classScope :: SymbolTable
-                   , srScope :: SymbolTable
-                   , className :: String
-                   , srState :: Maybe SRState}
+data CompSt = CompSt { classScopeOf :: SymbolTable
+                     , srScopeOf :: SymbolTable
+                     , classNameOf :: String
+                     , srNameOf :: String
+                     , retTypeOf :: RetType
+                     , funcTypeOf :: FuncType
+                     , jumpIdOf :: Int }
+initCompSt :: CompSt
+initCompSt = CompSt M.empty M.empty "" "" VoidT FunctionF 0
 
-data SRState = SRState { retType :: RetType
-                       , fType :: FuncType
-                       , jumpId :: Int}
+class VMWriter a where
+  toVM :: a -> State CompSt [String]
 
-lookupScopz :: Scopz -> String -> Maybe SymbolInfo
-lookupScopz (Scopz clsScope srScope' _ _) ident =
-  let srSymInfo = M.lookup ident srScope'
+instance VMWriter Class where
+  toVM cls@(Class ident _ srDecs) =
+    do
+      modify (\cs -> cs { classNameOf = ident
+                       , classScopeOf = getST cls })
+      concat <$> mapM toVM srDecs
+
+instance VMWriter SubroutineDec where
+  toVM srDec@(SubroutineDec ft rt ident params body) =
+    do
+      modify (\cs -> cs { srNameOf = ident
+                       , funcTypeOf = ft
+                       , retTypeOf = rt
+                       , srScopeOf = getST srDec })
+      CompSt {classNameOf = className} <- get
+      let fullyQualified = className ++ "." ++ ident
+      let funcLine =
+            ["function " ++ fullyQualified ++ " " ++ show (length params)]
+      (funcLine ++) <$> toVM body
+
+instance VMWriter SubroutineBody where
+  toVM (SubroutineBody _ stmts) = concat <$> mapM toVM stmts
+
+instance VMWriter Statement where
+  toVM (LetStmt ident Nothing expr) = do
+    compSt <- get
+    (++ [popVar compSt ident]) <$> toVM expr
+  toVM (IfStmt predicate ifBlock elseBlock) = do
+    CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
+    let elseLabel = className ++ "." ++ srName ++ "_$_else_$_" ++ show jumpId
+    let endifLabel = className ++ "." ++ srName ++ "_$_endif_$_" ++ show jumpId
+    concat <$> sequence
+      [ toVM predicate
+      , pure ["not"]
+      , pure ["if-goto " ++ elseLabel]
+      , concat <$> mapM toVM ifBlock
+      , pure ["label " ++ elseLabel]
+      , concat <$> mapM toVM (fromMaybe [] elseBlock)
+      , pure ["label " ++ endifLabel]]
+  toVM (WhileStmt predicate block) = do
+    CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
+    let startLabel = className ++ "." ++ srName ++ "_$_startwhile_$_" ++ show jumpId
+    let endLabel = className ++ "." ++ srName ++ "_$_endwhile_$_" ++ show jumpId
+    concat <$> sequence
+      [ pure ["label " ++ startLabel]
+      , toVM predicate
+      , pure ["not"]
+      , pure ["if-goto " ++ endLabel]
+      , concat <$> mapM toVM block
+      , pure ["goto " ++ startLabel]
+      , pure ["label " ++ endLabel]]
+  toVM (DoStmt srCall) = toVM srCall
+  toVM (RetStmt maybeExp) =
+    do
+      CompSt {retTypeOf = retType} <- get
+      let ret = if retType == VoidT
+                then ["push constant 0", "return"]
+                else ["return"]
+      case maybeExp of
+       Nothing -> pure ret
+       Just expr -> toVM expr >>= pure . (++ ret)
+  toVM stmt = pure [show stmt ++ "is not supported"]
+
+instance VMWriter SubroutineCall where
+  toVM subroutineCall =
+    let
+      (callName, exprs) =
+        case subroutineCall of
+         NakedSubrCall ident exprs' -> (ident, exprs')
+         CompoundSubrCall pident ident exprs' -> (pident ++ "." ++ ident, exprs')
+    in
+     concat <$> mapM toVM exprs
+     >>= (\exprVMs ->
+           pure $ exprVMs ++ ["call " ++ callName ++ " " ++ show (length exprs)])
+
+instance VMWriter Expression where
+  toVM (Expression term []) = toVM term
+  toVM (Expression term rest) =
+    let foo (op', term') = concat <$> sequence [toVM term', toVM op']
+    in concat <$> sequence (toVM term : map foo rest)
+
+instance VMWriter Term where
+  toVM (IntTerm int) = pure ["push constant " ++ show int]
+  -- strTerm
+  toVM (KwTerm FalseKW) = pure ["push constant 0"]
+  toVM (KwTerm Null) = pure ["push constant 0"]
+  toVM (KwTerm TrueKW) = pure ["push constant 1", "neg"]
+  toVM (VarName ident) = get >>= pure . (:[]) . flip pushVar ident
+  -- arrInd
+  toVM (SubrCall subrCall) = toVM subrCall
+  toVM (Expr expr) = toVM expr
+  toVM (UnOp op' term) = concat <$> sequence [toVM term, toVM op']
+  toVM t = pure [show t ++ " is not supported"]
+
+lookupCompSt :: CompSt -> String -> Maybe SymbolInfo
+lookupCompSt (CompSt {classScopeOf = clsScope, srScopeOf = srScope}) ident =
+  let srSymInfo = M.lookup ident srScope
       clsSymInfo = M.lookup ident clsScope
   in
    case srSymInfo of
     Nothing -> clsSymInfo
     _ -> srSymInfo
 
-pushVar :: Scopz -> String -> Maybe [String]
-pushVar scopz ident =
-  (\l -> ["push " ++ kindToSeg (kindOf l) ++ " " ++ show (indexOf l)])
-  <$> lookupScopz scopz ident
+pushVar :: CompSt -> String -> String
+pushVar compSt str =
+  let
+    SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
+  in
+   "push " ++ kindToSeg kind ++ " " ++ show index
 
-class VMWriter a where
-  toVM :: Scopz -> a -> [String]
-
-instance VMWriter Class where
-  toVM scopz (Class ident _ srDecs) =
-    let newScopz = scopz { className = ident }
-    in
-     srDecs >>= toVM newScopz
-
-instance VMWriter SubroutineDec where
-  toVM scopz srDec@(SubroutineDec ft rt ident params (SubroutineBody _ stmts)) =
-    let newScopz = scopz { srScope = getST srDec
-                         , srState = Just SRState { retType = rt
-                                                  , fType = ft
-                                                  , jumpId = 0 } } 
-        funcName = className scopz ++ "." ++ ident
-    in ("function " ++ funcName ++ " " ++ show (length params))
-       : (stmts >>= toVM newScopz)
-
-instance VMWriter Statement where
-  toVM scopz (DoStmt subRCall) = toVM scopz subRCall
-  toVM scopz (RetStmt maybeExp) =
-    let srState' = srState scopz
-        retType' = retType <$> srState'
-    in
-     case retType' of
-      Just VoidT -> ["push constant 0", "return"]
-      Just _ -> fromMaybe [] (toVM scopz <$> maybeExp) ++ ["return"]
-      Nothing -> error "Return statement encountered outside of function"
-
-instance VMWriter Expression where
-  toVM scopz (Expression term' []) = toVM scopz term'
-  toVM scopz (Expression term' rest) = toVM scopz term'
-                                       ++ (rest >>= opAndTermToVM scopz)
-
-opAndTermToVM :: Scopz -> (Op, Term) -> [String]
-opAndTermToVM scopz (op', term') = toVM scopz term' ++ toVM scopz op'
-
-instance VMWriter Term where
-  toVM _ (IntTerm int) = ["push constant " ++ show int]
-  toVM _ (StrTerm _) = ["STRING TERM NOT SUPPORTED YET"]
-  toVM _ (KwTerm FalseKW) = ["push constant 0"]
-  toVM _ (KwTerm Null) = ["push constant 0"]
-  toVM _ (KwTerm TrueKW) = ["push constant 1", "neg"]
-  toVM _ (KwTerm kw) = ["KEYWORD NOT SUPPORTED: " ++ show kw]
-  toVM scopz (VarName ident) = fromMaybe [] (pushVar scopz ident)
-  toVM _ (ArrInd ident expr') =
-    ["ARRAY INDEXING NOT SUPPORTED: " ++ show ident ++ "[" ++ show expr' ++ "]"]
-  toVM scopz (SubrCall subRCall) = toVM scopz subRCall
-  toVM scopz (Expr expr') = toVM scopz expr'
-  toVM scopz (UnOp op' term') = toVM scopz term' ++ toVM scopz op'
-
-instance VMWriter SubroutineCall where
-  toVM scopz (NakedSubrCall ident exprs) =
-    (exprs >>= toVM scopz) ++ ["call " ++ ident ++ " " ++ show (length exprs)]
-  toVM scopz (CompoundSubrCall pident ident exprs) =
-    let
-      subrName = pident ++ "." ++ ident
-    in
-     (exprs >>= toVM scopz) ++ ["call " ++ subrName ++ " " ++ show (length exprs)]
+popVar :: CompSt -> String -> String
+popVar compSt str =
+  let
+    SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
+  in
+   "pop " ++ kindToSeg kind ++ " " ++ show index
 
 instance VMWriter UnaryOp where
-  toVM _ Neg = ["neg"]
-  toVM _ Not = ["not"]
+  toVM Neg = pure ["neg"]
+  toVM Not = pure ["not"]
 
 instance VMWriter Op where
-  toVM _ Add = ["add"]
-  toVM _ Sub = ["sub"]
-  toVM _ Mul = ["call Math.multiply 2"]
-  toVM _ Div = ["call Math.divide 2"]
-  toVM _ And = ["and"]
-  toVM _ Or = ["or"]
-  toVM _ Lt = ["lt"]
-  toVM _ Gt = ["gt"]
-  toVM _ Equals = ["eq"]
+  toVM Add = pure ["add"]
+  toVM Sub = pure ["sub"]
+  toVM Mul = pure ["call Math.multiply 2"]
+  toVM Div = pure ["call Math.divide 2"]
+  toVM And = pure ["and"]
+  toVM Or = pure ["or"]
+  toVM Lt = pure ["lt"]
+  toVM Gt = pure ["gt"]
+  toVM Equals = pure ["eq"]
 
 writeVM :: FilePath -> IO ()
 writeVM infile =
   let outfile = infile -<.> "vm"
   in
    do
-     print outfile
      cls <- parseFile infile
-     let vm = toVM (Scopz M.empty M.empty "" Nothing) <$> cls
+     let vm =
+           fmap runIdentity . evalStateT <$> (toVM <$> cls) <*> pure initCompSt
      case vm of
-      Right stmts -> writeFile outfile (unlines stmts)
+      Right stmts -> writeFile outfile (unlines stmts) >> print stmts
+      -- Right stmts -> print stmts
+      -- Right stmts -> putStrLn
+                    -- $ unlines . filter (isInfixOf "not supported") $ stmts
       Left err -> print err
 
 main :: IO ()

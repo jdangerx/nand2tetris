@@ -44,7 +44,7 @@ data ClassVarType = StaticVar | FieldVar
                   deriving Show
 
 data Type = IntT | CharT | BoolT | ClassName Identifier
-          deriving Show
+          deriving (Show, Eq)
 
 data SubroutineDec =
   SubroutineDec FuncType RetType Identifier [Parameter] SubroutineBody
@@ -54,10 +54,10 @@ data Parameter = Param Type Identifier
                deriving Show
 
 data FuncType = ConstructorF | FunctionF | MethodF
-              deriving Show
+              deriving (Show, Eq)
 
 data RetType = VoidT | RetType Type
-             deriving Show
+             deriving (Show, Eq)
 
 data SubroutineBody =
   SubroutineBody [VarDec] [Statement]
@@ -197,7 +197,7 @@ whileStmt = do
 
 doStmt :: Parser Statement
 doStmt =
-  DoStmt <$> (termIs (Keyword Do) *> subrCall <* termIs (Symbol Semi))
+  DoStmt <$> (termIs (Keyword Do) *> parseSubrCall <* termIs (Symbol Semi))
 
 returnStmt :: Parser Statement
 returnStmt = RetStmt <$> (termIs (Keyword Return)
@@ -206,10 +206,10 @@ returnStmt = RetStmt <$> (termIs (Keyword Return)
 
 expression :: Parser Expression
 expression = do
-  t <- term
+  t <- parseTerm
   rest <- many (do
                   op' <- op
-                  t' <- term
+                  t' <- parseTerm
                   return (op', t'))
   return $ Expression t rest
 
@@ -229,15 +229,15 @@ singletonTerm = token show (const $ initialPos "noPos")
 arrayIndex :: Parser Term
 arrayIndex = ArrInd <$> parseIdent <*> between oBracket cBracket expression
 
-term :: Parser Term
-term = try (SubrCall <$> subrCall)
-       <|> try (Expr <$> between oParen cParen expression)
-       <|> try (UnOp <$> unaryOp <*> term)
-       <|> try arrayIndex
-       <|> try singletonTerm
+parseTerm :: Parser Term
+parseTerm = try (SubrCall <$> parseSubrCall)
+            <|> try (Expr <$> between oParen cParen expression)
+            <|> try (UnOp <$> unaryOp <*> parseTerm)
+            <|> try arrayIndex
+            <|> try singletonTerm
 
-subrCall :: Parser SubroutineCall
-subrCall =
+parseSubrCall :: Parser SubroutineCall
+parseSubrCall =
   try (NakedSubrCall <$> parseIdent <*> between oParen cParen expressionList)
   <|> try (CompoundSubrCall <$> parseIdent
            <*> (termIs (Symbol Dot) *> parseIdent)
