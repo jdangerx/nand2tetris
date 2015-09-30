@@ -4,7 +4,7 @@ module Main where
 import Data.Functor.Identity (runIdentity)
 import Data.List (isInfixOf)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, fromJust)
+import Data.Maybe (fromMaybe, fromJust, isNothing)
 import Control.Monad.State
 import System.Directory
 import System.Environment
@@ -58,7 +58,8 @@ instance Scope Class where
   getST (Class _ cvds _) = foldr updateST M.empty cvds
 
 initSRScope :: M.Map String SymbolInfo
-initSRScope = M.fromList [("this", SymInf IntT ArgumentK 0)]
+initSRScope = M.empty
+-- initSRScope = M.fromList [("this", SymInf IntT ArgumentK 0)]
 
 instance Scope SubroutineDec where
   getST (SubroutineDec _ _ _ params (SubroutineBody vardecs _))
@@ -94,8 +95,15 @@ instance VMWriter SubroutineDec where
       CompSt {classNameOf = className} <- get
       let fullyQualified = className ++ "." ++ ident
       let funcLine =
-            ["function " ++ fullyQualified ++ " " ++ show (length params)]
+            ["function " ++ fullyQualified ++ " " ++ show (numLocals srDec)]
       (funcLine ++) <$> toVM body
+
+numLocals :: SubroutineDec -> Int
+numLocals (SubroutineDec ft _ _ params (SubroutineBody varDecs _)) =
+  let numParams = if ft == MethodF
+                  then length params + 1
+                  else length params
+  in sum ((\(VarDec _ ids) -> length ids) <$> varDecs) + numParams
 
 instance VMWriter SubroutineBody where
   toVM (SubroutineBody _ stmts) = concat <$> mapM toVM stmts
@@ -106,6 +114,7 @@ instance VMWriter Statement where
     (++ [popVar compSt ident]) <$> toVM expr
   toVM (IfStmt predicate ifBlock elseBlock) = do
     CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
+    modify (\cs -> cs { jumpIdOf = jumpId + 1 })
     let elseLabel = className ++ "." ++ srName ++ "_$_else_$_" ++ show jumpId
     let endifLabel = className ++ "." ++ srName ++ "_$_endif_$_" ++ show jumpId
     concat <$> sequence
@@ -113,11 +122,13 @@ instance VMWriter Statement where
       , pure ["not"]
       , pure ["if-goto " ++ elseLabel]
       , concat <$> mapM toVM ifBlock
+      , pure ["goto " ++ endifLabel]
       , pure ["label " ++ elseLabel]
       , concat <$> mapM toVM (fromMaybe [] elseBlock)
       , pure ["label " ++ endifLabel]]
   toVM (WhileStmt predicate block) = do
     CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
+    modify (\cs -> cs { jumpIdOf = jumpId + 1 })
     let startLabel = className ++ "." ++ srName ++ "_$_startwhile_$_" ++ show jumpId
     let endLabel = className ++ "." ++ srName ++ "_$_endwhile_$_" ++ show jumpId
     concat <$> sequence
@@ -128,7 +139,7 @@ instance VMWriter Statement where
       , concat <$> mapM toVM block
       , pure ["goto " ++ startLabel]
       , pure ["label " ++ endLabel]]
-  toVM (DoStmt srCall) = toVM srCall
+  toVM (DoStmt srCall) = toVM srCall >>= (pure . (++ ["pop temp 0"]))
   toVM (RetStmt maybeExp) =
     do
       CompSt {retTypeOf = retType} <- get
@@ -141,16 +152,16 @@ instance VMWriter Statement where
   toVM stmt = pure [show stmt ++ "is not supported"]
 
 instance VMWriter SubroutineCall where
-  toVM subroutineCall =
+  toVM subroutineCall = do
+    compSt <- get
     let
-      (callName, exprs) =
+      (callName, exprs, ident) =
         case subroutineCall of
-         NakedSubrCall ident exprs' -> (ident, exprs')
-         CompoundSubrCall pident ident exprs' -> (pident ++ "." ++ ident, exprs')
-    in
-     concat <$> mapM toVM exprs
-     >>= (\exprVMs ->
-           pure $ exprVMs ++ ["call " ++ callName ++ " " ++ show (length exprs)])
+         NakedSubrCall ident' exprs' -> (ident', exprs', ident')
+         CompoundSubrCall pident ident' exprs' -> (pident ++ "." ++ ident', exprs', ident')
+    let isMethod = isNothing $ lookupCompSt compSt ident
+    concat <$> mapM toVM exprs
+      >>= (pure . (++ ["call " ++ callName ++ " " ++ show (length exprs)]))
 
 instance VMWriter Expression where
   toVM (Expression term []) = toVM term
