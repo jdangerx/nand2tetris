@@ -1,6 +1,7 @@
 #! /usr/bin/env runhaskell
 module Main where
 
+import Data.Char (ord)
 import Data.Functor.Identity (runIdentity)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, fromJust, isJust)
@@ -129,6 +130,14 @@ instance VMWriter Statement where
   toVM (LetStmt ident Nothing expr) = do
     compSt <- get
     (++ popVar compSt ident) <$> toVM expr
+  toVM (LetStmt arr (Just index) expr) = do
+    compSt <- get
+    let pushedvar = pushVar compSt arr
+    (pushedvar ++ ) <$> (concat <$> sequence [toVM index
+                                             , pure ["add"]
+                                             , pure ["pop pointer 1"]
+                                             , toVM expr
+                                             , pure ["pop that 0"]])
   toVM (IfStmt predicate ifBlock elseBlock) = do
     CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
     modify (\cs -> cs { jumpIdOf = jumpId + 1 })
@@ -166,7 +175,6 @@ instance VMWriter Statement where
       case maybeExp of
        Nothing -> pure ret
        Just expr -> toVM expr >>= pure . (++ ret)
-  toVM stmt = pure [show stmt ++ "is not supported"]
 
 instance VMWriter SubroutineCall where
   toVM (NakedSubrCall ident exprs) = do
@@ -199,13 +207,22 @@ instance VMWriter Expression where
 
 instance VMWriter Term where
   toVM (IntTerm int) = pure ["push constant " ++ show int]
-  -- strTerm
+  toVM (StrTerm str) =
+    let appends = concatMap (\c -> [ "push constant " ++ show (ord c)
+                                  , "call String.appendChar 2"]) str
+    in pure ([ "push constant " ++ show (length str) , "call String.new 1"]
+             ++ appends)
   toVM (KwTerm FalseKW) = pure ["push constant 0"]
   toVM (KwTerm Null) = pure ["push constant 0"]
   toVM (KwTerm TrueKW) = pure ["push constant 1", "neg"]
   toVM (KwTerm This) = pure ["push pointer 0"]
   toVM (VarName ident) = get >>= pure . flip pushVar ident
-  -- arrInd
+  toVM (ArrInd arr ind) = do
+    compSt <- get
+    toVM ind
+      >>= (pure . (++
+                   (pushVar compSt arr ++
+                    [ "add" , "call Memory.peek 1" ])))
   toVM (SubrCall subrCall) = toVM subrCall
   toVM (Expr expr) = toVM expr
   toVM (UnOp op' term) = concat <$> sequence [toVM term, toVM op']
