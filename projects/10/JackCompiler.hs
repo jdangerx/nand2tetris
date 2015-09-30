@@ -2,9 +2,8 @@
 module Main where
 
 import Data.Functor.Identity (runIdentity)
-import Data.List (isInfixOf)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, fromJust, isNothing)
+import Data.Maybe (fromMaybe, fromJust, isJust)
 import Control.Monad.State
 import System.Directory
 import System.Environment
@@ -92,11 +91,29 @@ instance VMWriter SubroutineDec where
                        , funcTypeOf = ft
                        , retTypeOf = rt
                        , srScopeOf = getST srDec })
-      CompSt {classNameOf = className} <- get
+      compSt@(CompSt {classNameOf = className}) <- get
       let fullyQualified = className ++ "." ++ ident
-      let funcLine =
-            ["function " ++ fullyQualified ++ " " ++ show (numLocals srDec)]
-      (funcLine ++) <$> toVM body
+      let funcInit =
+            ("function " ++ fullyQualified ++ " " ++ show (numLocals srDec))
+            : makeConstructorInit compSt srDec
+            ++ makeMethodInit srDec
+      (funcInit ++) <$> toVM body
+
+makeMethodInit :: SubroutineDec -> [String]
+makeMethodInit (SubroutineDec MethodF _ _ _ _) =
+  ["push argument 0", "pop pointer 0"]
+makeMethodInit _ = []
+
+makeConstructorInit :: CompSt -> SubroutineDec -> [String]
+makeConstructorInit
+  (CompSt {classScopeOf = classScope})
+  (SubroutineDec ConstructorF _ _ _ _) =
+    let numFields = M.size . M.filter ((== FieldK) . kindOf) $ classScope
+    in [ "push constant " ++ show numFields
+       , "call Memory.alloc 1"
+       , "pop pointer 0" ]
+makeConstructorInit _ _ = []
+
 
 numLocals :: SubroutineDec -> Int
 numLocals (SubroutineDec ft _ _ params (SubroutineBody varDecs _)) =
@@ -111,7 +128,7 @@ instance VMWriter SubroutineBody where
 instance VMWriter Statement where
   toVM (LetStmt ident Nothing expr) = do
     compSt <- get
-    (++ [popVar compSt ident]) <$> toVM expr
+    (++ popVar compSt ident) <$> toVM expr
   toVM (IfStmt predicate ifBlock elseBlock) = do
     CompSt {classNameOf = className, srNameOf = srName, jumpIdOf = jumpId} <- get
     modify (\cs -> cs { jumpIdOf = jumpId + 1 })
@@ -152,15 +169,20 @@ instance VMWriter Statement where
   toVM stmt = pure [show stmt ++ "is not supported"]
 
 instance VMWriter SubroutineCall where
-  toVM subroutineCall = do
-    compSt <- get
-    let
-      (callName, exprs, ident) =
-        case subroutineCall of
-         NakedSubrCall ident' exprs' -> (ident', exprs', ident')
-         CompoundSubrCall pident ident' exprs' -> (pident ++ "." ++ ident', exprs', ident')
-    let isMethod = isNothing $ lookupCompSt compSt ident
+  toVM (NakedSubrCall ident exprs) = do
+    CompSt {classNameOf = className } <- get
     concat <$> mapM toVM exprs
+      >>= (pure . (++ ["call " ++ className ++ "." ++ ident ++ " " ++ show (length exprs)]))
+  toVM (CompoundSubrCall pident ident exprs) = do
+    compSt <- get
+    let parent = lookupCompSt compSt pident
+    let isMethod = isJust parent
+    let this = ["push pointer 0" | isMethod]
+    let callName = case parent of
+          Just (SymInf (ClassName className) _ _) -> className ++ "." ++ ident
+          Nothing -> pident ++ "." ++ ident
+    concat <$> mapM toVM exprs
+      >>= (pure . (this ++))
       >>= (pure . (++ ["call " ++ callName ++ " " ++ show (length exprs)]))
 
 instance VMWriter Expression where
@@ -175,7 +197,8 @@ instance VMWriter Term where
   toVM (KwTerm FalseKW) = pure ["push constant 0"]
   toVM (KwTerm Null) = pure ["push constant 0"]
   toVM (KwTerm TrueKW) = pure ["push constant 1", "neg"]
-  toVM (VarName ident) = get >>= pure . (:[]) . flip pushVar ident
+  toVM (KwTerm This) = pure ["push pointer 0"]
+  toVM (VarName ident) = get >>= pure . flip pushVar ident
   -- arrInd
   toVM (SubrCall subrCall) = toVM subrCall
   toVM (Expr expr) = toVM expr
@@ -191,19 +214,35 @@ lookupCompSt (CompSt {classScopeOf = clsScope, srScopeOf = srScope}) ident =
     Nothing -> clsSymInfo
     _ -> srSymInfo
 
-pushVar :: CompSt -> String -> String
+pushVar :: CompSt -> String -> [String]
 pushVar compSt str =
   let
     SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
   in
-   "push " ++ kindToSeg kind ++ " " ++ show index
+   case kind of
+    FieldK -> [ "// pushing " ++ str ++ " field[" ++ show index ++ "]"
+             , "push pointer 0"
+             , "push constant " ++ show index
+             , "add"
+             , "call Memory.peek 1"] -- pushes value in memory to stack
+    _ -> ["push " ++ kindToSeg kind ++ " " ++ show index ++ "// pushing from " ++ str]
 
-popVar :: CompSt -> String -> String
+
+popVar :: CompSt -> String -> [String]
 popVar compSt str =
   let
     SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
   in
-   "pop " ++ kindToSeg kind ++ " " ++ show index
+   case kind of
+    FieldK -> ["// popping " ++ str ++ " field[" ++ show index ++ "]"
+             , "pop temp 0" -- poppedValue temporarily stored
+             , "push pointer 0"
+             , "push constant " ++ show index
+             , "add" -- now stack looks like fieldAddress : restOfStack
+             , "push temp 0" -- poppedValue : fieldAddress : restOfStack
+             , "call Memory.poke 2"] -- stores a value in a place
+    _ -> ["pop " ++ kindToSeg kind ++ " " ++ show index ++ "// popping to " ++ str]
+
 
 instance VMWriter UnaryOp where
   toVM Neg = pure ["neg"]
