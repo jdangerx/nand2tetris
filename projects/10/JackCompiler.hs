@@ -54,7 +54,7 @@ instance SymbolDef VarDec where
     foldl (\oldST ident -> newDef ident t VariableK oldST) st idents
 
 instance Scope Class where
-  getST (Class _ cvds _) = foldr updateST M.empty cvds
+  getST (Class _ cvds _) = foldl (flip updateST) M.empty cvds
 
 initSRScope :: M.Map String SymbolInfo
 initSRScope = M.empty
@@ -171,19 +171,25 @@ instance VMWriter Statement where
 instance VMWriter SubroutineCall where
   toVM (NakedSubrCall ident exprs) = do
     CompSt {classNameOf = className } <- get
+    let this = ["push pointer 0"]
+    let numParams = length exprs + 1
     concat <$> mapM toVM exprs
-      >>= (pure . (++ ["call " ++ className ++ "." ++ ident ++ " " ++ show (length exprs)]))
+      >>= (pure . (this ++))
+      >>= (pure . (++ ["call " ++ className ++ "." ++ ident ++ " " ++ show numParams]))
   toVM (CompoundSubrCall pident ident exprs) = do
     compSt <- get
     let parent = lookupCompSt compSt pident
     let isMethod = isJust parent
-    let this = ["push pointer 0" | isMethod]
+    let this = if isMethod
+               then pushVar compSt pident
+               else []
+    let numParams = length exprs + if isMethod then 1 else 0
     let callName = case parent of
           Just (SymInf (ClassName className) _ _) -> className ++ "." ++ ident
           Nothing -> pident ++ "." ++ ident
     concat <$> mapM toVM exprs
       >>= (pure . (this ++))
-      >>= (pure . (++ ["call " ++ callName ++ " " ++ show (length exprs)]))
+      >>= (pure . (++ ["call " ++ callName ++ " " ++ show numParams]))
 
 instance VMWriter Expression where
   toVM (Expression term []) = toVM term
@@ -220,12 +226,11 @@ pushVar compSt str =
     SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
   in
    case kind of
-    FieldK -> [ "// pushing " ++ str ++ " field[" ++ show index ++ "]"
-             , "push pointer 0"
+    FieldK -> [ "push pointer 0"
              , "push constant " ++ show index
              , "add"
              , "call Memory.peek 1"] -- pushes value in memory to stack
-    _ -> ["push " ++ kindToSeg kind ++ " " ++ show index ++ "// pushing from " ++ str]
+    _ -> ["push " ++ kindToSeg kind ++ " " ++ show index]
 
 
 popVar :: CompSt -> String -> [String]
@@ -234,14 +239,13 @@ popVar compSt str =
     SymInf {kindOf = kind, indexOf = index} = fromJust $ lookupCompSt compSt str
   in
    case kind of
-    FieldK -> ["// popping " ++ str ++ " field[" ++ show index ++ "]"
-             , "pop temp 0" -- poppedValue temporarily stored
+    FieldK -> [ "pop temp 0" -- poppedValue temporarily stored
              , "push pointer 0"
              , "push constant " ++ show index
              , "add" -- now stack looks like fieldAddress : restOfStack
              , "push temp 0" -- poppedValue : fieldAddress : restOfStack
              , "call Memory.poke 2"] -- stores a value in a place
-    _ -> ["pop " ++ kindToSeg kind ++ " " ++ show index ++ "// popping to " ++ str]
+    _ -> ["pop " ++ kindToSeg kind ++ " " ++ show index]
 
 
 instance VMWriter UnaryOp where
@@ -267,8 +271,13 @@ writeVM infile =
      cls <- parseFile infile
      let vm =
            fmap runIdentity . evalStateT <$> (toVM <$> cls) <*> pure initCompSt
+     let fstate =
+           fmap runIdentity . execStateT <$> (toVM <$> cls) <*> pure initCompSt
+     case fstate of
+      Right st -> print (classScopeOf st)
+      Left err -> print err
      case vm of
-      Right stmts -> writeFile outfile (unlines stmts) >> print stmts
+      Right stmts -> writeFile outfile (unlines stmts) -- >> print stmts
       -- Right stmts -> print stmts
       -- Right stmts -> putStrLn
                     -- $ unlines . filter (isInfixOf "not supported") $ stmts
