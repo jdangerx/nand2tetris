@@ -59,11 +59,14 @@ instance Scope Class where
 
 initSRScope :: M.Map String SymbolInfo
 initSRScope = M.empty
--- initSRScope = M.fromList [("this", SymInf IntT ArgumentK 0)]
+
+initMethodScope :: M.Map String SymbolInfo
+initMethodScope = M.fromList [("this", SymInf IntT ArgumentK 0)]
 
 instance Scope SubroutineDec where
-  getST (SubroutineDec _ _ _ params (SubroutineBody vardecs _))
-    = foldl (flip updateST) (foldl (flip updateST) initSRScope params) vardecs
+  getST (SubroutineDec ft _ _ params (SubroutineBody vardecs _))
+    = let initScope = if ft == MethodF then initMethodScope else initSRScope
+      in foldl (flip updateST) (foldl (flip updateST) initScope params) vardecs
 
 data CompSt = CompSt { classScopeOf :: SymbolTable
                      , srScopeOf :: SymbolTable
